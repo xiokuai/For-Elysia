@@ -1,0 +1,110 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Zhiai",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "begin": "/\\*",
+          "end": "\\*/",
+          "name": "comment.block.zhiai"
+        },
+        {
+          "match": "//.*$",
+          "name": "comment.line.double-slash.zhiai"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "begin": "\"",
+          "end": "\"",
+          "name": "string.quoted.double.zhiai",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.zhiai"
+            }
+          ]
+        },
+        {
+          "begin": "'",
+          "end": "'",
+          "name": "string.quoted.single.zhiai",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.zhiai"
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "match": "\\b(如果|否则如果|否则|当|时|则|循环|从|到|步长|对于|每个|在|中|结束|尝试|捕获)\\b",
+          "name": "keyword.control.zhiai"
+        },
+        {
+          "match": "\\b(让|常量|函数|返回|中断|继续)\\b",
+          "name": "keyword.other.zhiai"
+        },
+        {
+          "match": "\\b(并且|或者|非)\\b",
+          "name": "keyword.operator.logical.zhiai"
+        },
+        {
+          "match": "\\b(输出|输入|长度|类型|转换数字|转换文字|随机数|绝对值|平方根|四舍五入|最大值|最小值|求和|范围|包含|是数字|是文字|是数组|是对象|是布尔|是空|读文件|写文件|追加文件|文件存在|字符码|从字符码|错误|退出|对象键|对象值|对象合并|对象有键|整除|格式化|连接|数组|复制数组|合并数组|添加|删除|截取|索引|命令行参数|筛选|映射|排序|归约|查找|每个|任意|全部|反转|分割|替换|修剪|小写|大写|开头是|结尾是)\\b",
+          "name": "support.function.zhiai"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "match": "\\b(真|假|空)\\b",
+          "name": "constant.language.zhiai"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "match": "\\b\\d+(\\.\\d+)?\\b",
+          "name": "constant.numeric.zhiai"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": "(=>|\\+|-|\\*|/|%|\\*\\*|==|!=|<=|>=|<|>|!|&&|\\|\\||=|\\+=|-=|\\*=|/=)",
+          "name": "keyword.operator.zhiai"
+        }
+      ]
+    }
+  },
+  "scopeName": "source.zhiai"
+}

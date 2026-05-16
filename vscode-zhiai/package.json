@@ -1,0 +1,54 @@
+{
+  "name": "zhiai",
+  "displayName": "致爱 (Zhiai) Language Support",
+  "description": "Syntax highlighting and autocomplete for Zhiai programming language",
+  "version": "1.1.0",
+  "publisher": "zhiai-team",
+  "icon": "logo.png",
+  "repository": "https://github.com/example/zhiai",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "zhiai",
+        "aliases": [
+          "Zhiai",
+          "zhiai",
+          "致爱"
+        ],
+        "extensions": [
+          ".za",
+          ".zab"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "zhiai",
+        "scopeName": "source.zhiai",
+        "path": "./syntaxes/zhiai.tmLanguage.json"
+      }
+    ]
+  },
+  "activationEvents": [
+    "onLanguage:zhiai"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "typescript": "^4.9.3"
+  }
+}

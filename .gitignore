@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller folders and files
+build/
+dist/
+*.spec
+
+# ZhiAi generated executable and bytecode
+*.exe
+*.zab
+!compiler.zab
+
+# VSCode settings
+.vscode/
+
+# Ignore system files
+.DS_Store
+Thumbs.db

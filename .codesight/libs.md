@@ -1,0 +1,56 @@
+# Libraries
+
+- `zhiai\ast_nodes.py`
+  - class Node
+  - class Program
+  - class VarDecl
+  - class ConstDecl
+  - class ExprStmt
+  - class IfStmt
+  - _...23 more_
+- `zhiai\builtins.py`
+  - function array_add: (arr, item)
+  - function array_remove: (arr, index)
+  - function array_contains: (arr, item)
+  - function array_sort: (arr)
+  - function array_reverse: (arr)
+  - function array_join: (arr, func)
+  - _...15 more_
+- `zhiai\interpreter.py`
+  - class ReturnSignal
+  - class BreakSignal
+  - class ContinueSignal
+  - class Environment
+  - class Function
+  - class Interpreter
+- `zhiai\lexer.py`
+  - function tokenize: (source, filename)
+  - class TT
+  - class Token
+  - class LexError
+  - class Lexer
+- `zhiai\parser.py`
+  - function parse: (tokens)
+  - class ParseError
+  - class Parser
+- `zhiai\vm.py`
+  - function run_file: (path)
+  - function main: ()
+  - class VMError
+  - class Frame
+  - class VM
+- `zhiai\__main__.py`
+  - function run_source: (source, filename, interpreter)
+  - function run_file: (filepath)
+  - function repl: ()
+  - function needs_more_lines: (source)
+  - function read_multiline: (first_line)
+  - function main: ()
+- `zhiai_cli.py`
+  - function get_base_path: ()
+  - function setup_zhiai_path: ()
+  - function get_compiler_path: ()
+  - function cmd_repl: ()
+  - function cmd_run_za: (filepath)
+  - function cmd_run_zab: (filepath)
+  - _...8 more_
