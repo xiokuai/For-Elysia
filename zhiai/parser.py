@@ -83,6 +83,8 @@ class Parser:
             return ast.ContinueStmt()
         if tok.type == TT.TRY:
             return self.parse_try_catch()
+        if tok.type == TT.IDENTIFIER and tok.value == "类":
+            return self.parse_class()
 
         # 表达式语句
         expr = self.parse_expr()
@@ -467,6 +469,18 @@ class Parser:
                 pairs.append((key, value))
         self.expect(TT.RBRACE, "期望 '}'")
         return ast.ObjectLit(pairs)
+
+    def parse_class(self):
+        self.advance() # "类"
+        name = self.expect(TT.IDENTIFIER, "期望类名").value
+        methods = []
+        while not self.is_at_end() and not self.check(TT.END):
+            if self.check(TT.FUNC):
+                methods.append(self.parse_func_def())
+            else:
+                self.error("类定义中目前只支持函数")
+        self.expect(TT.END, "期望 '结束'")
+        return ast.ClassDef(name, methods)
 
 
 def parse(tokens):

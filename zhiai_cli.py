@@ -2,11 +2,11 @@
 
 用法:
     zhiai                         # 启动REPL交互模式
-    zhiai run 文件.za             # 解释执行致爱程序
+    zhiai run 文件.za [--jit]      # 解释执行或 JIT 执行致爱程序
     zhiai compile 文件.za         # 编译为字节码 .zab
     zhiai compile 文件.za -o x.zab
     zhiai exec 文件.zab           # 执行字节码文件
-    zhiai 文件.za                 # 编译并执行
+    zhiai 文件.za [--jit]         # 编译并执行
     zhiai 文件.zab                # 执行字节码
     zhiai -e '代码'               # 执行单行代码
     zhiai -v                      # 版本信息
@@ -64,11 +64,21 @@ def cmd_repl():
     repl()
 
 
-def cmd_run_za(filepath):
-    """解释执行 .za 文件"""
+def cmd_run_za(filepath, jit=False):
+    """执行 .za 文件"""
     setup_zhiai_path()
-    from zhiai.__main__ import run_file
-    run_file(filepath)
+    if jit:
+        from zhiai.lexer import tokenize
+        from zhiai.parser import parse
+        from zhiai.jit import exec_jit
+        with open(filepath, "r", encoding="utf-8") as f:
+            source = f.read()
+        tokens = tokenize(source, filepath)
+        program = parse(tokens)
+        exec_jit(program)
+    else:
+        from zhiai.__main__ import run_file
+        run_file(filepath)
 
 
 def cmd_run_zab(filepath, fast=False):
@@ -129,8 +139,11 @@ def cmd_compile(input_file, output_file=None):
         sys.argv = old_argv
 
 
-def cmd_compile_and_run(input_file, fast=False):
+def cmd_compile_and_run(input_file, fast=False, jit=False):
     """编译并执行"""
+    if jit:
+        cmd_run_za(input_file, jit=True)
+        return
     base_name = os.path.splitext(input_file)[0]
     zab_file = base_name + ".zab"
     cmd_compile(input_file, zab_file)
@@ -522,6 +535,8 @@ def main():
         return
 
     # 默认：根据扩展名自动判断
+    jit = "--jit" in args
+    if jit: args.remove("--jit")
     filepath = args[0]
     if not os.path.exists(filepath):
         print("错误: 文件不存在 '" + filepath + "'", file=sys.stderr)
@@ -531,7 +546,7 @@ def main():
     if filepath.endswith(".zab"):
         cmd_run_zab(filepath, fast=fast_mode)
     elif filepath.endswith(".za"):
-        cmd_compile_and_run(filepath, fast=fast_mode)
+        cmd_compile_and_run(filepath, fast=fast_mode, jit=jit)
     else:
         print("错误: 不支持的文件类型 '" + filepath + "'", file=sys.stderr)
         print("支持: .za (源码) .zab (字节码)", file=sys.stderr)

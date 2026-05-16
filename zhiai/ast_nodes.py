@@ -208,3 +208,10 @@ class AnonymousFunc(Node):
     def __init__(self, params, body):
         self.params = params
         self.body = body
+
+
+class ClassDef(Node):
+    """类 名称 ... 结束"""
+    def __init__(self, name, methods):
+        self.name = name
+        self.methods = methods # list of FuncDef
