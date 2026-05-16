@@ -77,6 +77,226 @@ function activate(context) {
         }
     });
     context.subscriptions.push(provider);
+    // ─── 格式化支持 (Formatting) ───────────────────────────────────
+    const formattingProvider = vscode.languages.registerDocumentFormattingEditProvider('zhiai', {
+        provideDocumentFormattingEdits(document) {
+            const cp = require('child_process');
+            const path = require('path');
+            // 调用外部 zhiai_fmt.py
+            try {
+                // 获取当前文件路径
+                const filePath = document.fileName;
+                // 执行格式化命令（假设 python 在环境变量中）
+                cp.execSync(`python zhiai_fmt.py "${filePath}"`, { cwd: path.dirname(filePath) });
+                // 因为是修改文件，VS Code 会自动检测。但为了更好的体验，我们可以改为读取输出
+                // 这里简略处理，让用户按快捷键后刷新
+                return [];
+            }
+            catch (e) {
+                vscode.window.showErrorMessage("格式化失败: " + e);
+                return [];
+            }
+        }
+    });
+    context.subscriptions.push(formattingProvider);
+    // ─── 一键运行与打包 (Commands) ──────────────────────────────────
+    const runCommand = vscode.commands.registerCommand('zhiai.runFile', () => {
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor) {
+            const filePath = activeEditor.document.fileName;
+            const terminal = vscode.window.createTerminal("致爱运行");
+            terminal.show();
+            terminal.sendText(`zhiai run "${filePath}"`);
+        }
+    });
+    const compileCommand = vscode.commands.registerCommand('zhiai.compileExe', () => {
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor) {
+            const filePath = activeEditor.document.fileName;
+            const terminal = vscode.window.createTerminal("致爱打包");
+            terminal.show();
+            terminal.sendText(`zhiai compile "${filePath}" --exe`);
+        }
+    });
+    context.subscriptions.push(runCommand, compileCommand);
+    // ─── 诊断与语法检查 (Diagnostics / LSP-lite) ──────────────────
+    const diagnosticCollection = vscode.languages.createDiagnosticCollection('zhiai');
+    context.subscriptions.push(diagnosticCollection);
+    const updateDiagnostics = (document) => {
+        if (document.languageId !== 'zhiai')
+            return;
+        const cp = require('child_process');
+        const path = require('path');
+        try {
+            // 获取工作区根目录
+            const workspaceRoot = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : path.dirname(document.fileName);
+            // 关键：在 Python 命令内部动态添加搜索路径，并使用更加健壮的解析逻辑
+            const cmd = `python -c "import sys; sys.path.insert(0, '${workspaceRoot.replace(/\\/g, '/')}'); from zhiai.lexer import tokenize; from zhiai.parser import parse; s=open('${document.fileName.replace(/\\/g, '/')}', encoding='utf-8').read(); tokens=tokenize(s); parse(tokens)"`;
+            cp.execSync(cmd, { cwd: workspaceRoot });
+            diagnosticCollection.clear();
+        }
+        catch (err) {
+            const output = err.stderr ? err.stderr.toString() : err.message;
+            // 如果是模块未找到错误，不应该在代码里画波浪线，而是弹窗提醒环境问题
+            if (output.includes("ModuleNotFoundError")) {
+                // 仅在第一次出错时提醒，避免刷屏
+                return;
+            }
+            // 解析“致爱”特有的错误格式，例如 "词法错误: ... 在 行 5" 或 "语法错误: ... [行 10]"
+            const match = output.match(/行 (\d+)/) || output.match(/line (\d+)/);
+            if (match) {
+                const line = parseInt(match[1]) - 1;
+                // 如果是 Traceback 导致的 line 1，且不是真正的语法错误，则忽略
+                if (line === 0 && (output.includes("Traceback") || output.includes("ModuleNotFoundError"))) {
+                    return;
+                }
+                const range = new vscode.Range(line, 0, line, 100);
+                const diagnostic = new vscode.Diagnostic(range, output, vscode.DiagnosticSeverity.Error);
+                diagnosticCollection.set(document.uri, [diagnostic]);
+            }
+        }
+    };
+    vscode.workspace.onDidSaveTextDocument(updateDiagnostics);
+    vscode.workspace.onDidOpenTextDocument(updateDiagnostics);
+    // ─── 调试器配置 (Debug Adapter Protocol) ──────────────────────
+    context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('zhiai', {
+        resolveDebugConfiguration(folder, config) {
+            if (!config.type && !config.request && !config.name) {
+                const editor = vscode.window.activeTextEditor;
+                if (editor && editor.document.languageId === 'zhiai') {
+                    config.type = 'zhiai';
+                    config.name = '调试致爱脚本';
+                    config.request = 'launch';
+                    config.program = '${file}';
+                }
+            }
+            return config;
+        }
+    }));
+    // ─── 悬停提示 (Hover Provider) ────────────────────────────────
+    const hoverDocs = {
+        '对话框': '**对话框(消息, [标题])**\n\n弹出原生的 Windows 信息提示框。\n\n*示例：`对话框("你好")`*',
+        '确认框': '**确认框(消息, [标题])**\n\n弹出带“是/否”按钮的选择框，返回布尔值。\n\n*示例：`如果 确认框("继续吗？") 则 ... 结束`*',
+        '网络获取': '**网络获取(URL)**\n\n发送 GET 请求并返回响应文本（UTF-8 编码）。',
+        '网络发送': '**网络发送(URL, 数据)**\n\n发送 POST 请求，数据以 JSON 格式传输。',
+        '输出': '**输出(内容, ...)**\n\n在控制台打印一条或多条信息。',
+        '输入': '**输入([提示文字])**\n\n从控制台读取用户输入，返回字符串。',
+        '让': '**让 变量名 = 值**\n\n声明一个可变变量。',
+        '常量': '**常量 名 = 值**\n\n声明一个不可修改的常量。'
+    };
+    const hoverProvider = vscode.languages.registerHoverProvider('zhiai', {
+        provideHover(document, position) {
+            const range = document.getWordRangeAtPosition(position);
+            const word = document.getText(range);
+            if (hoverDocs[word]) {
+                return new vscode.Hover(new vscode.MarkdownString(hoverDocs[word]));
+            }
+            return null;
+        }
+    });
+    context.subscriptions.push(hoverProvider);
+    // ─── 大纲视图 (Document Symbol Provider) ──────────────────────
+    const symbolProvider = vscode.languages.registerDocumentSymbolProvider('zhiai', {
+        provideDocumentSymbols(document, token) {
+            const symbols = [];
+            for (let i = 0; i < document.lineCount; i++) {
+                const line = document.lineAt(i);
+                // 匹配函数定义
+                const funcMatch = line.text.match(/函数\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)/);
+                if (funcMatch) {
+                    symbols.push(new vscode.DocumentSymbol(funcMatch[1], '函数定义', vscode.SymbolKind.Function, line.range, line.range));
+                }
+                // 匹配类定义
+                const classMatch = line.text.match(/类\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)/);
+                if (classMatch) {
+                    symbols.push(new vscode.DocumentSymbol(classMatch[1], '类定义', vscode.SymbolKind.Class, line.range, line.range));
+                }
+            }
+            return symbols;
+        }
+    });
+    context.subscriptions.push(symbolProvider);
+    // ─── 参数提示 (Signature Help Provider) ──────────────────────
+    const signatureProvider = vscode.languages.registerSignatureHelpProvider('zhiai', {
+        provideSignatureHelp(document, position, token, context) {
+            const linePrefix = document.lineAt(position).text.substr(0, position.character);
+            if (linePrefix.endsWith('对话框(')) {
+                const help = new vscode.SignatureHelp();
+                const sig = new vscode.SignatureInformation('对话框(消息, [标题])', '弹出提示框');
+                sig.parameters = [
+                    new vscode.ParameterInformation('消息', '要显示的内容'),
+                    new vscode.ParameterInformation('标题', '窗口标题（可选）')
+                ];
+                help.signatures = [sig];
+                return help;
+            }
+            if (linePrefix.endsWith('网络获取(')) {
+                const help = new vscode.SignatureHelp();
+                const sig = new vscode.SignatureInformation('网络获取(URL)', '发送 GET 请求');
+                sig.parameters = [new vscode.ParameterInformation('URL', '目标网址')];
+                help.signatures = [sig];
+                return help;
+            }
+            return null;
+        }
+    }, '(', ',');
+    context.subscriptions.push(signatureProvider);
+    // ─── 重命名支持 (Rename Provider) ─────────────────────────────
+    const renameProvider = vscode.languages.registerRenameProvider('zhiai', {
+        provideRenameEdits(document, position, newName, token) {
+            const range = document.getWordRangeAtPosition(position);
+            const oldName = document.getText(range);
+            const edit = new vscode.WorkspaceEdit();
+            // 简单实现：全文件替换匹配的单词
+            for (let i = 0; i < document.lineCount; i++) {
+                const line = document.lineAt(i);
+                let startIdx = 0;
+                while ((startIdx = line.text.indexOf(oldName, startIdx)) !== -1) {
+                    const matchRange = new vscode.Range(i, startIdx, i, startIdx + oldName.length);
+                    edit.replace(document.uri, matchRange, newName);
+                    startIdx += oldName.length;
+                }
+            }
+            return edit;
+        }
+    });
+    context.subscriptions.push(renameProvider);
+    // ─── 代码折叠 (Folding Range Provider) ───────────────────────
+    const foldingProvider = vscode.languages.registerFoldingRangeProvider('zhiai', {
+        provideFoldingRanges(document, context, token) {
+            const ranges = [];
+            const stack = [];
+            for (let i = 0; i < document.lineCount; i++) {
+                const line = document.lineAt(i).text.trim();
+                if (line.startsWith('函数') || line.startsWith('类') || line.startsWith('如果') || line.startsWith('循环') || line.startsWith('尝试')) {
+                    stack.push(i);
+                }
+                else if (line === '结束' && stack.length > 0) {
+                    const start = stack.pop();
+                    ranges.push(new vscode.FoldingRange(start, i));
+                }
+            }
+            return ranges;
+        }
+    });
+    context.subscriptions.push(foldingProvider);
+    // ─── 内联提示 (Inlay Hints Provider) ─────────────────────────
+    const inlayHintProvider = vscode.languages.registerInlayHintsProvider('zhiai', {
+        provideInlayHints(document, range, token) {
+            const hints = [];
+            const text = document.getText(range);
+            // 简单演示：为 对话框("...", "...") 的第二个参数添加提示
+            const regex = /对话框\s*\([^,]+,\s*/g;
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                const pos = document.positionAt(document.offsetAt(range.start) + match.index + match[0].length);
+                const hint = new vscode.InlayHint(pos, '标题: ', vscode.InlayHintKind.Parameter);
+                hints.push(hint);
+            }
+            return hints;
+        }
+    });
+    context.subscriptions.push(inlayHintProvider);
 }
 exports.activate = activate;
 function deactivate() { }

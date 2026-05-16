@@ -12,6 +12,9 @@
     zhiai -v                      # 版本信息
     zhiai install                 # 注册 .za/.zab 文件关联
     zhiai uninstall               # 移除文件关联
+    zhiai zap install <名> <URL>   # 安装模块包
+    zhiai fmt <文件.za>           # 格式化代码
+    zhiai debug <文件.zab>        # 调试运行
 """
 
 import sys
@@ -496,6 +499,26 @@ def main():
     if args[0] == "uninstall":
         cmd_uninstall()
         pause()
+        return
+
+    if args[0] == "zap":
+        import zhiai_zap
+        sys.argv = [sys.argv[0]] + args[1:]
+        zhiai_zap.main()
+        return
+
+    if args[0] == "fmt":
+        import zhiai_fmt
+        sys.argv = [sys.argv[0]] + args[1:]
+        zhiai_fmt.main()
+        return
+
+    if args[0] == "debug":
+        if len(args) < 2:
+            print("用法: zhiai debug <文件.zab>", file=sys.stderr)
+            sys.exit(1)
+        # 调试模式下运行，VM 会处理 BREAKPOINT
+        cmd_run_zab(args[1], fast=False)
         return
 
     # 默认：根据扩展名自动判断

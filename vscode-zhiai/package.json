@@ -2,7 +2,7 @@
   "name": "zhiai",
   "displayName": "致爱 (Zhiai) Language Support",
   "description": "Syntax highlighting and autocomplete for Zhiai programming language",
-  "version": "1.1.0",
+  "version": "1.5.0",
   "publisher": "zhiai-team",
   "icon": "logo.png",
   "repository": "https://github.com/example/zhiai",
@@ -35,6 +35,47 @@
         "language": "zhiai",
         "scopeName": "source.zhiai",
         "path": "./syntaxes/zhiai.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "zhiai",
+        "path": "./snippets/snippets.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "zhiai.runFile",
+        "title": "运行致爱脚本",
+        "icon": "$(play)"
+      },
+      {
+        "command": "zhiai.compileExe",
+        "title": "打包为 EXE",
+        "icon": "$(package)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "zhiai.runFile",
+          "when": "resourceExtname == .za",
+          "group": "navigation"
+        },
+        {
+          "command": "zhiai.compileExe",
+          "when": "resourceExtname == .za",
+          "group": "navigation"
+        }
+      ]
+    },
+    "debuggers": [
+      {
+        "type": "zhiai",
+        "label": "致爱调试器",
+        "languages": [
+          "zhiai"
+        ]
       }
     ]
   },

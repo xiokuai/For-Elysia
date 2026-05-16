@@ -81,6 +81,8 @@ class Frame:
         # 使用列表存储局部变量，索引访问提升性能
         self.locals = [None] * locals_count
         self.locals_count = locals_count
+        # 异常处理栈: (handler_ip, stack_size)
+        self.exception_handlers = []
 
 
 class VM:
@@ -129,6 +131,12 @@ class VM:
             "JMP_IFNOT": self._op_JMP_IFNOT,
             "HALT": self._op_HALT,
             "BATCH_OP": self._op_BATCH_OP,
+            "TRY": self._op_TRY,
+            "END_TRY": self._op_END_TRY,
+            "RAISE": self._op_RAISE,
+            "MAKE_CLASS": self._op_MAKE_CLASS,
+            "NEW": self._op_NEW,
+            "BREAKPOINT": self._op_BREAKPOINT,
         }
 
         # 注册内置函数
@@ -196,14 +204,45 @@ class VM:
         self.halted = False
 
         while not self.halted and self.ip < len(self.instructions):
-            instr = self.instructions[self.ip]
-            op = instr[0]
-            self.ip += 1
-            # 使用分发表直接调用对应实现
-            handler = self._dispatch.get(op)
-            if handler is None:
-                raise VMError(f"未知指令: {op}")
-            handler(instr[1:])
+            try:
+                instr = self.instructions[self.ip]
+                op = instr[0]
+                self.ip += 1
+                handler = self._dispatch.get(op)
+                if handler is None:
+                    raise VMError(f"未知指令: {op}")
+                # 性能优化：直接传递整个指令，避免切片产生新列表
+                handler(instr)
+            except Exception as e:
+                self._handle_exception(e)
+
+    def _handle_exception(self, e):
+        """处理异常：查找最近的捕获点"""
+        if self.call_stack:
+            frame = self.call_stack[-1]
+            if frame.exception_handlers:
+                handler_ip, saved_stack_size = frame.exception_handlers.pop()
+                # 恢复栈深度，压入错误对象
+                while len(self.stack) > saved_stack_size:
+                    self.pop()
+                self.push(str(e))
+                self.ip = handler_ip
+                return
+        
+        # 如果没有局部处理，则向上传播
+        if self.call_stack:
+            self.call_stack.pop()
+            if self.call_stack:
+                last_frame = self.call_stack[-1]
+                self.instructions = last_frame.instructions
+                self.constants = last_frame.constants
+                self.ip = last_frame.return_addr
+                self._handle_exception(e)
+                return
+        
+        # 顶层异常
+        print(f"致命错误: {e}", file=sys.stderr)
+        self.halted = True
 
     def push(self, value):
         self.stack.append(value)
@@ -243,31 +282,31 @@ class VM:
             return len(value) > 0
         return True
 
-    def _op_PUSH(self, args):
-        self.push(self.constants[args[0]])
+    def _op_PUSH(self, instr):
+        self.push(self.constants[instr[1]])
 
-    def _op_POP(self, args):
+    def _op_POP(self, instr):
         self.pop()
 
-    def _op_DUP(self, args):
+    def _op_DUP(self, instr):
         self.push(self.peek())
 
-    def _op_ADD(self, args):
+    def _op_ADD(self, instr):
         b, a = self.pop(), self.pop()
         if isinstance(a, str) or isinstance(b, str):
             self.push(self.to_str(a) + self.to_str(b))
         else:
             self.push(a + b)
 
-    def _op_SUB(self, args):
+    def _op_SUB(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a - b)
 
-    def _op_MUL(self, args):
+    def _op_MUL(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a * b)
 
-    def _op_DIV(self, args):
+    def _op_DIV(self, instr):
         b, a = self.pop(), self.pop()
         if b == 0:
             raise VMError("除以零")
@@ -276,52 +315,52 @@ class VM:
         else:
             self.push(a / b)
 
-    def _op_MOD(self, args):
+    def _op_MOD(self, instr):
         b, a = self.pop(), self.pop()
         if b == 0:
             raise VMError("除以零")
         self.push(a % b)
 
-    def _op_POW(self, args):
+    def _op_POW(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a ** b)
 
-    def _op_NEG(self, args):
+    def _op_NEG(self, instr):
         self.push(-self.pop())
 
-    def _op_EQ(self, args):
+    def _op_EQ(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a == b)
 
-    def _op_NEQ(self, args):
+    def _op_NEQ(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a != b)
 
-    def _op_LT(self, args):
+    def _op_LT(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a < b)
 
-    def _op_GT(self, args):
+    def _op_GT(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a > b)
 
-    def _op_LTE(self, args):
+    def _op_LTE(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a <= b)
 
-    def _op_GTE(self, args):
+    def _op_GTE(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a >= b)
 
-    def _op_AND(self, args):
+    def _op_AND(self, instr):
         b, a = self.pop(), self.pop()
         self.push(self.is_truthy(a) and self.is_truthy(b))
 
-    def _op_OR(self, args):
+    def _op_OR(self, instr):
         b, a = self.pop(), self.pop()
         self.push(self.is_truthy(a) or self.is_truthy(b))
 
-    def _op_NOT(self, args):
+    def _op_NOT(self, instr):
         self.push(not self.is_truthy(self.pop()))
 
     def _op_LOAD(self, args):
@@ -335,13 +374,13 @@ class VM:
         env = self.call_stack[-1].env if self.call_stack else self.global_env
         env.set(name, value)
 
-    def _op_DEF(self, args):
-        name = self.constants[args[0]]
+    def _op_DEF(self, instr):
+        name = self.constants[instr[1]]
         value = self.peek()
         env = self.call_stack[-1].env if self.call_stack else self.global_env
         env.define(name, value)
 
-    def _op_LOAD_INDEX(self, args):
+    def _op_LOAD_INDEX(self, instr):
         index = self.pop()
         obj = self.pop()
         if isinstance(obj, list):
@@ -359,7 +398,7 @@ class VM:
         else:
             raise VMError(f"无法索引: {type(obj).__name__}")
 
-    def _op_STORE_INDEX(self, args):
+    def _op_STORE_INDEX(self, instr):
         index = self.pop()
         obj = self.pop()
         value = self.pop()
@@ -371,8 +410,8 @@ class VM:
             raise VMError(f"无法索引赋值: {type(obj).__name__}")
         self.push(value)
 
-    def _op_LOAD_PROP(self, args):
-        prop = self.constants[args[0]]
+    def _op_LOAD_PROP(self, instr):
+        prop = self.constants[instr[1]]
         obj = self.pop()
         if isinstance(obj, dict):
             val = obj.get(prop)
@@ -401,8 +440,8 @@ class VM:
         else:
             raise VMError(f"无法访问属性: {type(obj).__name__}")
 
-    def _op_STORE_PROP(self, args):
-        prop = self.constants[args[0]]
+    def _op_STORE_PROP(self, instr):
+        prop = self.constants[instr[1]]
         value = self.pop()
         obj = self.pop()
         if isinstance(obj, dict):
@@ -411,8 +450,8 @@ class VM:
             raise VMError(f"无法属性赋值: {type(obj).__name__}")
         self.push(value)
 
-    def _op_CALL(self, args):
-        argc = args[0]
+    def _op_CALL(self, instr):
+        argc = instr[1]
         func_args = [self.pop() for _ in range(argc)]
         func_args.reverse()
         callee = self.pop()
@@ -449,7 +488,7 @@ class VM:
         result = callee(*func_args)
         self.push(result)
 
-    def _op_RET(self, args):
+    def _op_RET(self, instr):
         # 返回值
         ret_val = self.pop()
         if not self.call_stack:
@@ -464,29 +503,29 @@ class VM:
         self.ip = frame.return_addr
         self.push(ret_val)
 
-    def _op_JMP(self, args):
-        self.ip = args[0]
+    def _op_JMP(self, instr):
+        self.ip = instr[1]
 
-    def _op_JMP_IF(self, args):
-        offset = args[0]
+    def _op_JMP_IF(self, instr):
+        offset = instr[1]
         if self.is_truthy(self.pop()):
             self.ip = offset
 
-    def _op_JMP_IFNOT(self, args):
-        offset = args[0]
+    def _op_JMP_IFNOT(self, instr):
+        offset = instr[1]
         if not self.is_truthy(self.pop()):
             self.ip = offset
 
-    def _op_MAKE_ARRAY(self, args):
-        count = args[0]
+    def _op_MAKE_ARRAY(self, instr):
+        count = instr[1]
         arr = []
         for _ in range(count):
             arr.append(self.pop())
         arr.reverse()
         self.push(arr)
 
-    def _op_MAKE_OBJECT(self, args):
-        count = args[0]
+    def _op_MAKE_OBJECT(self, instr):
+        count = instr[1]
         obj = {}
         for _ in range(count):
             value = self.pop()
@@ -494,17 +533,17 @@ class VM:
             obj[key] = value
         self.push(obj)
 
-    def _op_PRINT(self, args):
+    def _op_PRINT(self, instr):
         value = self.pop()
         print(self.to_str(value))
 
-    def _op_HALT(self, args):
+    def _op_HALT(self, instr):
         self.halted = True
 
-    def _op_BATCH_OP(self, args):
-        # args: [func_id, arg_count]
-        func_id = args[0]
-        arg_count = args[1]
+    def _op_BATCH_OP(self, instr):
+        # instr: [BATCH_OP, func_id, arg_count]
+        func_id = instr[1]
+        arg_count = instr[2]
         # 弹出参数
         params = [self.pop() for _ in range(arg_count)]
         params.reverse()
@@ -515,6 +554,46 @@ class VM:
         result = batch_func(*params)
         self.push(result)
 
+    def _op_TRY(self, instr):
+        handler_ip = instr[1]
+        if self.call_stack:
+            self.call_stack[-1].exception_handlers.append((handler_ip, len(self.stack)))
+        else:
+            # 顶层也可以有简单的异常处理逻辑（视具体实现而定）
+            pass
+
+    def _op_END_TRY(self, instr):
+        if self.call_stack and self.call_stack[-1].exception_handlers:
+            self.call_stack[-1].exception_handlers.pop()
+
+    def _op_RAISE(self, instr):
+        msg = self.pop()
+        raise VMError(str(msg))
+
+    def _op_MAKE_CLASS(self, instr):
+        name = self.constants[instr[1]]
+        methods = self.pop() # 一个字典
+        klass = {"type": "class", "name": name, "methods": methods}
+        self.global_env.define(name, klass)
+        self.push(klass)
+
+    def _op_NEW(self, instr):
+        klass = self.pop()
+        instance = {"type": "instance", "class": klass, "fields": {}}
+        self.push(instance)
+        # 检查是否有构造函数
+        if "构造" in klass["methods"]:
+            constructor = klass["methods"]["构造"]
+            # 自动调用构造函数（这里简化逻辑，实际需要压入参数并 CALL）
+            pass
+
+
+    def _op_BREAKPOINT(self, instr):
+        print(f"\n[调试] 触发断点 IP: {self.ip}")
+        print(f"  栈: {self.stack}")
+        if self.call_stack:
+            print(f"  局部变量: {self.call_stack[-1].locals}")
+        input("按 Enter 继续执行...")
 
 def run_file(path):
     """执行 .zab 字节码文件"""

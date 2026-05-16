@@ -4,6 +4,12 @@ import random as _random
 import math as _math
 import os as _os
 import sys as _sys
+import urllib.request as _urllib
+import json as _json
+import tkinter as _tk
+from tkinter import messagebox as _mb
+from tkinter import simpledialog as _sd
+import datetime as _datetime
 
 
 class ZhiAiError(Exception):
@@ -212,6 +218,82 @@ def _退出(code=0):
     _sys.exit(int(code))
 
 
+# ── 网络操作 ──────────────────────────────────────────────────────────
+
+def _网络获取(url):
+    """发送 GET 请求并返回响应文本"""
+    try:
+        with _urllib.urlopen(str(url)) as response:
+            return response.read().decode('utf-8')
+    except Exception as e:
+        raise RuntimeError(f"网络获取失败: {e}")
+
+def _网络发送(url, data_dict):
+    """发送 POST 请求（JSON 格式）"""
+    try:
+        data = _json.dumps(data_dict).encode('utf-8')
+        req = _urllib.Request(str(url), data=data, content_type='application/json')
+        with _urllib.urlopen(req) as response:
+            return response.read().decode('utf-8')
+    except Exception as e:
+        raise RuntimeError(f"网络发送失败: {e}")
+
+
+# ── 图形界面 ──────────────────────────────────────────────────────────
+
+def _对话框(message, title="致爱"):
+    """显示一个简单的消息对话框"""
+    root = _tk.Tk()
+    root.withdraw()
+    _mb.showinfo(title, str(message))
+    root.destroy()
+
+def _确认框(message, title="致爱"):
+    """显示一个确认对话框，返回布尔值"""
+    root = _tk.Tk()
+    root.withdraw()
+    res = _mb.askyesno(title, str(message))
+    root.destroy()
+    return res
+
+def _输入框(prompt, title="致爱"):
+    """显示一个输入对话框，返回字符串"""
+    root = _tk.Tk()
+    root.withdraw()
+    res = _sd.askstring(title, prompt)
+    root.destroy()
+    return res
+
+def _列表选择(items, prompt="请选择", title="致爱"):
+    """弹出一个列表选择框（简单模拟）"""
+    if not isinstance(items, list):
+        raise RuntimeError("列表选择需要一个数组")
+    
+    root = _tk.Tk()
+    root.title(title)
+    root.geometry("300x400")
+    
+    var = _tk.StringVar()
+    _tk.Label(root, text=prompt).pack(pady=10)
+    
+    lb = _tk.Listbox(root)
+    for i in items:
+        lb.insert(_tk.END, str(i))
+    lb.pack(expand=True, fill='both', padx=10)
+    
+    result = {"val": None}
+    
+    def on_select():
+        sel = lb.curselection()
+        if sel:
+            result["val"] = items[sel[0]]
+            root.destroy()
+            
+    _tk.Button(root, text="确定", command=on_select).pack(pady=10)
+    root.mainloop()
+    return result["val"]
+
+
 # ── 对象操作 ──────────────────────────────────────────────────────────
 
 def _对象键(obj):
@@ -255,10 +337,24 @@ def _整除(a, b):
 
 def _格式化(template, *args):
     """格式化字符串，用 {} 作为占位符"""
-    s = str(template)
-    for arg in args:
-        s = s.replace("{}", _转换文字(arg), 1)
-    return s
+    return template.format(*args)
+
+def _时间():
+    """获取当前时间戳"""
+    return _datetime.datetime.now().timestamp()
+
+def _格式化时间(timestamp, fmt="%Y-%m-%d %H:%M:%S"):
+    """格式化时间戳"""
+    dt = _datetime.datetime.fromtimestamp(float(timestamp))
+    return dt.strftime(fmt)
+
+def _解析JSON(text):
+    """解析 JSON 字符串为对象/数组"""
+    return _json.loads(text)
+
+def _生成JSON(obj):
+    """将对象/数组生成 JSON 字符串"""
+    return _json.dumps(obj, ensure_ascii=False)
 
 
 def _连接(*args):
@@ -375,6 +471,10 @@ BUILTINS = {
     "整除": _整除,
     "格式化": _格式化,
     "连接": _连接,
+    "时间": _时间,
+    "格式化时间": _格式化时间,
+    "解析JSON": _解析JSON,
+    "生成JSON": _生成JSON,
     # 数组扩展
     "数组": _数组,
     "复制数组": _复制数组,
@@ -385,6 +485,14 @@ BUILTINS = {
     "索引": _索引,
     # 系统
     "命令行参数": _命令行参数,
+    # 网络
+    "网络获取": _网络获取,
+    "网络发送": _网络发送,
+    # 图形界面
+    "对话框": _对话框,
+    "确认框": _确认框,
+    "输入框": _输入框,
+    "列表选择": _列表选择,
 }
 
 
