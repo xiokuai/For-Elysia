@@ -40,6 +40,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zhiai.builtins import BUILTINS, ARRAY_METHODS, STRING_METHODS, BATCH_FUNC_MAP, ZhiAiError
+from zhiai.shapes import EMPTY_SHAPE
 
 
 class VMError(Exception):
@@ -83,6 +84,31 @@ class Frame:
         self.locals_count = locals_count
         # 异常处理栈: (handler_ip, stack_size)
         self.exception_handlers = []
+
+
+class Instance:
+    """类实例，使用 Shape 优化属性存储"""
+    def __init__(self, klass):
+        self.klass = klass
+        self.shape = EMPTY_SHAPE
+        self.fields = []
+
+    def get_prop(self, name):
+        offset = self.shape.get_offset(name)
+        if offset is not None:
+            return self.fields[offset]
+        # 检查类方法
+        if name in self.klass["methods"]:
+            return self.klass["methods"][name]
+        return None
+
+    def set_prop(self, name, value):
+        offset = self.shape.get_offset(name)
+        if offset is not None:
+            self.fields[offset] = value
+        else:
+            self.shape = self.shape.transition(name)
+            self.fields.append(value)
 
 
 class VM:
@@ -137,6 +163,14 @@ class VM:
             "MAKE_CLASS": self._op_MAKE_CLASS,
             "NEW": self._op_NEW,
             "BREAKPOINT": self._op_BREAKPOINT,
+            # 特化指令
+            "LOAD_LOCAL": self._op_LOAD_LOCAL,
+            "STORE_LOCAL": self._op_STORE_LOCAL,
+            "LOAD_GLOBAL": self._op_LOAD_GLOBAL,
+            "STORE_GLOBAL": self._op_STORE_GLOBAL,
+            "FAST_ADD": self._op_FAST_ADD,
+            "FAST_SUB": self._op_FAST_SUB,
+            "BINOP": self._op_BINOP,
         }
 
         # 注册内置函数
@@ -298,7 +332,15 @@ class VM:
         else:
             self.push(a + b)
 
+    def _op_FAST_ADD(self, instr):
+        b, a = self.pop(), self.pop()
+        self.push(a + b)
+
     def _op_SUB(self, instr):
+        b, a = self.pop(), self.pop()
+        self.push(a - b)
+
+    def _op_FAST_SUB(self, instr):
         b, a = self.pop(), self.pop()
         self.push(a - b)
 
@@ -380,6 +422,26 @@ class VM:
         env = self.call_stack[-1].env if self.call_stack else self.global_env
         env.define(name, value)
 
+    def _op_LOAD_LOCAL(self, instr):
+        self.push(self.call_stack[-1].locals[instr[1]])
+
+    def _op_STORE_LOCAL(self, instr):
+        self.call_stack[-1].locals[instr[1]] = self.pop()
+
+    def _op_LOAD_GLOBAL(self, instr):
+        self.push(self.global_env.get(self.constants[instr[1]]))
+
+    def _op_STORE_GLOBAL(self, instr):
+        self.global_env.set(self.constants[instr[1]], self.pop())
+
+    def _op_BINOP(self, instr):
+        op = instr[1]
+        b, a = self.pop(), self.pop()
+        if op == '+': self.push(a + b)
+        elif op == '-': self.push(a - b)
+        elif op == '*': self.push(a * b)
+        elif op == '/': self.push(a / b)
+
     def _op_LOAD_INDEX(self, instr):
         index = self.pop()
         obj = self.pop()
@@ -411,44 +473,40 @@ class VM:
         self.push(value)
 
     def _op_LOAD_PROP(self, instr):
-        prop = self.constants[instr[1]]
+        name = self.constants[instr[1]]
         obj = self.pop()
-        if isinstance(obj, dict):
-            val = obj.get(prop)
-            if val is not None:
-                self.push(val)
-            elif prop in ARRAY_METHODS:
-                self.push(lambda *a: ARRAY_METHODS[prop](obj, *a))
-            elif prop == "长度":
-                self.push(len(obj))
-            else:
-                self.push(None)
-        elif isinstance(obj, list):
-            if prop == "长度":
-                self.push(len(obj))
-            elif prop in ARRAY_METHODS:
-                self.push(lambda *a: ARRAY_METHODS[prop](obj, *a))
-            else:
-                raise VMError(f"数组没有属性 '{prop}'")
+        if isinstance(obj, Instance):
+            self.push(obj.get_prop(name))
+        elif isinstance(obj, dict):
+            self.push(obj.get(name))
         elif isinstance(obj, str):
-            if prop == "长度":
+            if name == "长度":
                 self.push(len(obj))
-            elif prop in STRING_METHODS:
-                self.push(lambda *a: STRING_METHODS[prop](obj, *a))
+            elif name in STRING_METHODS:
+                self.push(lambda *a: STRING_METHODS[name](obj, *a))
             else:
-                raise VMError(f"字符串没有属性 '{prop}'")
+                raise VMError(f"字符串没有方法: {name}")
+        elif isinstance(obj, list):
+            if name == "长度":
+                self.push(len(obj))
+            elif name in ARRAY_METHODS:
+                self.push(lambda *a: ARRAY_METHODS[name](obj, *a))
+            else:
+                raise VMError(f"数组没有方法: {name}")
         else:
-            raise VMError(f"无法访问属性: {type(obj).__name__}")
+            self.push(getattr(obj, name, None))
 
     def _op_STORE_PROP(self, instr):
-        prop = self.constants[instr[1]]
-        value = self.pop()
+        name = self.constants[instr[1]]
+        val = self.pop()
         obj = self.pop()
-        if isinstance(obj, dict):
-            obj[prop] = value
+        if isinstance(obj, Instance):
+            obj.set_prop(name, val)
+        elif isinstance(obj, dict):
+            obj[name] = val
         else:
-            raise VMError(f"无法属性赋值: {type(obj).__name__}")
-        self.push(value)
+            setattr(obj, name, val)
+        self.push(val)
 
     def _op_CALL(self, instr):
         argc = instr[1]
@@ -579,7 +637,7 @@ class VM:
 
     def _op_NEW(self, instr):
         klass = self.pop()
-        instance = {"type": "instance", "class": klass, "fields": {}}
+        instance = Instance(klass)
         self.push(instance)
         # 检查是否有构造函数
         if "构造" in klass["methods"]:
