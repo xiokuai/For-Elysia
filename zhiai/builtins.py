@@ -603,3 +603,14 @@ STRING_METHODS = {
     "结尾是": str_endswith,
     "截取": str_substr,
 }
+
+# ── 批处理映射 ──────────────────────────────────────────────────────────
+# 为 BATCH_OP 指令提供快速索引
+
+BATCH_FUNC_MAP = {
+    1: _筛选,
+    2: _映射,
+    3: array_sort,
+    4: str_split,
+    5: str_replace,
+}

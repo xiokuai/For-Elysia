@@ -68,10 +68,19 @@ def cmd_run_za(filepath):
     run_file(filepath)
 
 
-def cmd_run_zab(filepath):
+def cmd_run_zab(filepath, fast=False):
     """VM 执行 .zab 文件"""
     setup_zhiai_path()
-    from zhiai.vm import VM
+    if fast:
+        try:
+            from zhiai._fastvm import VM
+            print("[信息] 使用高速 VM 模式")
+        except ImportError:
+            from zhiai.vm import VM
+            print("[警告] 找不到高速 VM 模块，回退到标准模式")
+    else:
+        from zhiai.vm import VM
+        
     vm = VM()
     vm.load_file(filepath)
     vm.run()
@@ -117,13 +126,13 @@ def cmd_compile(input_file, output_file=None):
         sys.argv = old_argv
 
 
-def cmd_compile_and_run(input_file):
+def cmd_compile_and_run(input_file, fast=False):
     """编译并执行"""
     base_name = os.path.splitext(input_file)[0]
     zab_file = base_name + ".zab"
     cmd_compile(input_file, zab_file)
     print()
-    cmd_run_zab(zab_file)
+    cmd_run_zab(zab_file, fast=fast)
 
 
 def cmd_compile_exe(input_file, output_file=None):
@@ -408,14 +417,19 @@ def main():
         cmd_repl()
         return
 
+    # 检测 --fast 标志
+    fast_mode = "--fast" in args
+    if fast_mode:
+        args = [a for a in args if a != "--fast"]
+
     # 子命令
     if args[0] == "run":
         if len(args) < 2:
-            print("用法: zhiai run <文件.za|文件.zab>", file=sys.stderr)
+            print("用法: zhiai run <文件.za|文件.zab> [--fast]", file=sys.stderr)
             sys.exit(1)
         filepath = args[1]
         if filepath.endswith(".zab"):
-            cmd_run_zab(filepath)
+            cmd_run_zab(filepath, fast=fast_mode)
         else:
             cmd_run_za(filepath)
         pause()
@@ -453,9 +467,9 @@ def main():
 
     if args[0] == "exec":
         if len(args) < 2:
-            print("用法: zhiai exec <文件.zab>", file=sys.stderr)
+            print("用法: zhiai exec <文件.zab> [--fast]", file=sys.stderr)
             sys.exit(1)
-        cmd_run_zab(args[1])
+        cmd_run_zab(args[1], fast=fast_mode)
         pause()
         return
 
@@ -471,7 +485,7 @@ def main():
         return
 
     if args[0] in ("-v", "--version"):
-        print("致爱 v1.0.0")
+        print("致爱 v1.0.1")
         return
 
     if args[0] == "install":
@@ -492,12 +506,14 @@ def main():
         sys.exit(1)
 
     if filepath.endswith(".zab"):
-        cmd_run_zab(filepath)
+        cmd_run_zab(filepath, fast=fast_mode)
     elif filepath.endswith(".za"):
-        cmd_compile_and_run(filepath)
+        cmd_compile_and_run(filepath, fast=fast_mode)
     else:
         print("错误: 不支持的文件类型 '" + filepath + "'", file=sys.stderr)
         print("支持: .za (源码) .zab (字节码)", file=sys.stderr)
+        pause()
+        sys.exit(1)
         pause()
         sys.exit(1)
 

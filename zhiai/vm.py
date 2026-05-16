@@ -39,7 +39,7 @@ import os
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from zhiai.builtins import BUILTINS, ARRAY_METHODS, STRING_METHODS, ZhiAiError
+from zhiai.builtins import BUILTINS, ARRAY_METHODS, STRING_METHODS, BATCH_FUNC_MAP, ZhiAiError
 
 
 class VMError(Exception):
@@ -73,11 +73,14 @@ class Environment:
 class Frame:
     """函数调用帧"""
 
-    def __init__(self, instructions, return_addr, env=None, constants=None):
+    def __init__(self, instructions, return_addr, env=None, constants=None, locals_count=0):
         self.instructions = instructions
         self.return_addr = return_addr
         self.env = env
         self.constants = constants
+        # 使用列表存储局部变量，索引访问提升性能
+        self.locals = [None] * locals_count
+        self.locals_count = locals_count
 
 
 class VM:
@@ -91,6 +94,42 @@ class VM:
         self.instructions = []
         self.constants = []
         self.halted = False
+        # 指令分发表，映射 opcode 到实现方法
+        self._dispatch = {
+            "PUSH": self._op_PUSH,
+            "POP": self._op_POP,
+            "DUP": self._op_DUP,
+            "ADD": self._op_ADD,
+            "SUB": self._op_SUB,
+            "MUL": self._op_MUL,
+            "DIV": self._op_DIV,
+            "MOD": self._op_MOD,
+            "POW": self._op_POW,
+            "NEG": self._op_NEG,
+            "EQ": self._op_EQ,
+            "NEQ": self._op_NEQ,
+            "LT": self._op_LT,
+            "GT": self._op_GT,
+            "LTE": self._op_LTE,
+            "GTE": self._op_GTE,
+            "AND": self._op_AND,
+            "OR": self._op_OR,
+            "NOT": self._op_NOT,
+            "LOAD": self._op_LOAD,
+            "STORE": self._op_STORE,
+            "DEF": self._op_DEF,
+            "LOAD_INDEX": self._op_LOAD_INDEX,
+            "STORE_INDEX": self._op_STORE_INDEX,
+            "LOAD_PROP": self._op_LOAD_PROP,
+            "STORE_PROP": self._op_STORE_PROP,
+            "CALL": self._op_CALL,
+            "RET": self._op_RET,
+            "JMP": self._op_JMP,
+            "JMP_IF": self._op_JMP_IF,
+            "JMP_IFNOT": self._op_JMP_IFNOT,
+            "HALT": self._op_HALT,
+            "BATCH_OP": self._op_BATCH_OP,
+        }
 
         # 注册内置函数
         for name, func in BUILTINS.items():
@@ -110,10 +149,6 @@ class VM:
             else:
                 raise VMError(f"导入失败: 找不到模块 '{module_path}'")
                 
-        # 如果是源码，需要先编译（这里简单起见，如果提供了解释器或预编译即可）
-        # 我们在 VM 里统一当做 .zab 加载。如果是 .za，由于没有自举编译器环境，这里会报错，
-        # 所以目前要求 `导入` 最好指向编译好的 .zab（即我们的 DLL）
-        
         # 为了通用性，启动一个新的 VM 实例
         sub_vm = VM()
         
@@ -164,7 +199,11 @@ class VM:
             instr = self.instructions[self.ip]
             op = instr[0]
             self.ip += 1
-            self.execute(op, instr[1:])
+            # 使用分发表直接调用对应实现
+            handler = self._dispatch.get(op)
+            if handler is None:
+                raise VMError(f"未知指令: {op}")
+            handler(instr[1:])
 
     def push(self, value):
         self.stack.append(value)
@@ -204,359 +243,277 @@ class VM:
             return len(value) > 0
         return True
 
-    def execute(self, op, args):
-        """执行单条指令"""
+    def _op_PUSH(self, args):
+        self.push(self.constants[args[0]])
 
-        if op == "PUSH":
-            self.push(self.constants[args[0]])
+    def _op_POP(self, args):
+        self.pop()
 
-        elif op == "POP":
-            self.pop()
+    def _op_DUP(self, args):
+        self.push(self.peek())
 
-        elif op == "DUP":
-            self.push(self.peek())
-
-        # ── 算术 ──
-        elif op == "ADD":
-            b, a = self.pop(), self.pop()
-            if isinstance(a, str) or isinstance(b, str):
-                self.push(self.to_str(a) + self.to_str(b))
-            else:
-                self.push(a + b)
-
-        elif op == "SUB":
-            b, a = self.pop(), self.pop()
-            self.push(a - b)
-
-        elif op == "MUL":
-            b, a = self.pop(), self.pop()
-            self.push(a * b)
-
-        elif op == "DIV":
-            b, a = self.pop(), self.pop()
-            if b == 0:
-                raise VMError("除以零")
-            if isinstance(a, int) and isinstance(b, int) and a % b == 0:
-                self.push(a // b)
-            else:
-                self.push(a / b)
-
-        elif op == "MOD":
-            b, a = self.pop(), self.pop()
-            if b == 0:
-                raise VMError("除以零")
-            self.push(a % b)
-
-        elif op == "POW":
-            b, a = self.pop(), self.pop()
-            self.push(a ** b)
-
-        elif op == "NEG":
-            self.push(-self.pop())
-
-        # ── 比较 ──
-        elif op == "EQ":
-            b, a = self.pop(), self.pop()
-            self.push(a == b)
-
-        elif op == "NEQ":
-            b, a = self.pop(), self.pop()
-            self.push(a != b)
-
-        elif op == "LT":
-            b, a = self.pop(), self.pop()
-            self.push(a < b)
-
-        elif op == "GT":
-            b, a = self.pop(), self.pop()
-            self.push(a > b)
-
-        elif op == "LTE":
-            b, a = self.pop(), self.pop()
-            self.push(a <= b)
-
-        elif op == "GTE":
-            b, a = self.pop(), self.pop()
-            self.push(a >= b)
-
-        # ── 逻辑 ──
-        elif op == "AND":
-            b, a = self.pop(), self.pop()
-            self.push(self.is_truthy(a) and self.is_truthy(b))
-
-        elif op == "OR":
-            b, a = self.pop(), self.pop()
-            self.push(self.is_truthy(a) or self.is_truthy(b))
-
-        elif op == "NOT":
-            self.push(not self.is_truthy(self.pop()))
-
-        # ── 变量 ──
-        elif op == "LOAD":
-            name = self.constants[args[0]]
-            env = self.call_stack[-1].env if self.call_stack else self.global_env
-            self.push(env.get(name))
-
-        elif op == "STORE":
-            name = self.constants[args[0]]
-            value = self.peek()
-            env = self.call_stack[-1].env if self.call_stack else self.global_env
-            env.set(name, value)
-
-        elif op == "DEF":
-            name = self.constants[args[0]]
-            value = self.peek()
-            env = self.call_stack[-1].env if self.call_stack else self.global_env
-            env.define(name, value)
-
-        # ── 索引 ──
-        elif op == "LOAD_INDEX":
-            index = self.pop()
-            obj = self.pop()
-            if isinstance(obj, list):
-                idx = int(index)
-                if idx < 0:
-                    idx += len(obj)
-                self.push(obj[idx])
-            elif isinstance(obj, dict):
-                self.push(obj.get(index))
-            elif isinstance(obj, str):
-                idx = int(index)
-                if idx < 0:
-                    idx += len(obj)
-                self.push(obj[idx])
-            else:
-                raise VMError(f"无法索引: {type(obj).__name__}")
-
-        elif op == "STORE_INDEX":
-            index = self.pop()
-            obj = self.pop()
-            value = self.pop()
-            if isinstance(obj, list):
-                obj[int(index)] = value
-            elif isinstance(obj, dict):
-                obj[index] = value
-            else:
-                raise VMError(f"无法索引赋值: {type(obj).__name__}")
-            self.push(value)
-
-        elif op == "LOAD_PROP":
-            prop = self.constants[args[0]]
-            obj = self.pop()
-            if isinstance(obj, dict):
-                val = obj.get(prop)
-                if val is not None:
-                    self.push(val)
-                elif prop in ARRAY_METHODS:
-                    self.push(lambda *a: ARRAY_METHODS[prop](obj, *a))
-                elif prop == "长度":
-                    self.push(len(obj))
-                else:
-                    self.push(None)
-            elif isinstance(obj, list):
-                if prop == "长度":
-                    self.push(len(obj))
-                elif prop in ARRAY_METHODS:
-                    self.push(lambda *a: ARRAY_METHODS[prop](obj, *a))
-                else:
-                    raise VMError(f"数组没有属性 '{prop}'")
-            elif isinstance(obj, str):
-                if prop == "长度":
-                    self.push(len(obj))
-                elif prop in STRING_METHODS:
-                    self.push(lambda *a: STRING_METHODS[prop](obj, *a))
-                else:
-                    raise VMError(f"字符串没有属性 '{prop}'")
-            else:
-                raise VMError(f"无法访问属性: {type(obj).__name__}")
-
-        elif op == "STORE_PROP":
-            prop = self.constants[args[0]]
-            value = self.pop()
-            obj = self.pop()
-            if isinstance(obj, dict):
-                obj[prop] = value
-            else:
-                raise VMError(f"无法属性赋值: {type(obj).__name__}")
-            self.push(value)
-
-        # ── 调用 ──
-        elif op == "CALL":
-            argc = args[0]
-            func_args = []
-            for _ in range(argc):
-                func_args.append(self.pop())
-            func_args.reverse()
-            callee = self.pop()
-
-            if isinstance(callee, dict) and "type" in callee and callee["type"] == "function":
-                # 用户定义的函数
-                if len(func_args) != callee["arity"]:
-                    raise VMError(
-                        f"函数期望 {callee['arity']} 个参数，但得到 {len(func_args)} 个"
-                    )
-                func_env = Environment(callee.get("closure", self.global_env))
-                # 参数覆盖闭包变量（参数优先级更高）
-                for i, param in enumerate(callee["params"]):
-                    func_env.define(param, func_args[i])
-                frame = Frame(
-                    instructions=self.instructions,
-                    return_addr=self.ip,
-                    env=func_env,
-                    constants=self.constants
-                )
-                self.call_stack.append(frame)
-                self.instructions = callee.get("instructions", self.instructions)
-                self.constants = callee.get("constants", self.constants)
-                self.ip = callee["instr_start"]
-            elif callable(callee):
-                # 内置函数
-                try:
-                    result = callee(*func_args)
-                    self.push(result)
-                except TypeError as e:
-                    raise VMError(f"调用错误: {e}")
-                except ZhiAiError as e:
-                    raise VMError(str(e))
-            else:
-                raise VMError(f"无法调用: {type(callee).__name__}")
-
-        elif op == "CALL_METHOD":
-            method_name = self.constants[args[0]]
-            argc = args[1]
-            method_args = []
-            for _ in range(argc):
-                method_args.append(self.pop())
-            method_args.reverse()
-            obj = self.pop()
-
-            if isinstance(obj, list):
-                if method_name in ARRAY_METHODS:
-                    self.push(ARRAY_METHODS[method_name](obj, *method_args))
-                elif method_name == "长度":
-                    self.push(len(obj))
-                else:
-                    raise VMError(f"数组没有方法 '{method_name}'")
-            elif isinstance(obj, str):
-                if method_name in STRING_METHODS:
-                    self.push(STRING_METHODS[method_name](obj, *method_args))
-                elif method_name == "长度":
-                    self.push(len(obj))
-                else:
-                    raise VMError(f"字符串没有方法 '{method_name}'")
-            elif isinstance(obj, dict):
-                if method_name in obj:
-                    func = obj[method_name]
-                    if callable(func):
-                        self.push(func(*method_args))
-                    elif isinstance(func, dict) and func.get("type") == "function":
-                        # 将对象本身作为隐式第一个参数压入？（致爱目前没有 this，所以直接当普通函数调）
-                        if len(method_args) != func["arity"]:
-                            raise VMError(
-                                f"方法期望 {func['arity']} 个参数，但得到 {len(method_args)} 个"
-                            )
-                        func_env = Environment(func.get("closure", self.global_env))
-                        for i, param in enumerate(func["params"]):
-                            func_env.define(param, method_args[i])
-                        frame = Frame(
-                            instructions=self.instructions,
-                            return_addr=self.ip,
-                            env=func_env,
-                            constants=self.constants
-                        )
-                        self.call_stack.append(frame)
-                        self.instructions = func.get("instructions", self.instructions)
-                        self.constants = func.get("constants", self.constants)
-                        self.ip = func["instr_start"]
-                    else:
-                        raise VMError(f"对象属性 '{method_name}' 不是可调用函数")
-                else:
-                    raise VMError(f"对象没有方法 '{method_name}'")
-            else:
-                raise VMError(f"无法调用方法: {type(obj).__name__}")
-
-        elif op == "MAKE_FUNC":
-            name = self.constants[args[0]]
-            arity = args[1]
-            param_count = args[2]
-            params = []
-            for i in range(param_count):
-                params.append(self.constants[args[3 + i]])
-            instr_start = args[3 + param_count]
-            # 捕获闭包：保存当前作用域环境
-            closure_env = self.call_stack[-1].env if self.call_stack else self.global_env
-            func = {
-                "type": "function",
-                "name": name,
-                "arity": arity,
-                "params": params,
-                "instr_start": instr_start,
-                "closure": closure_env,
-                "instructions": self.instructions,
-                "constants": self.constants
-            }
-            self.push(func)
-            if name:
-                if self.call_stack:
-                    self.call_stack[-1].env.define(name, func)
-                else:
-                    self.global_env.define(name, func)
-
-        elif op == "RET":
-            value = self.pop()
-            if not self.call_stack:
-                # 顶层返回
-                self.halted = True
-                self.push(value)
-                return
-            frame = self.call_stack.pop()
-            self.instructions = frame.instructions
-            self.constants = getattr(frame, "constants", self.constants) or self.constants
-            self.ip = frame.return_addr
-            self.push(value)
-
-        # ── 控制流 ──
-        elif op == "JMP":
-            self.ip = args[0]
-
-        elif op == "JMP_IF":
-            value = self.pop()
-            if self.is_truthy(value):
-                self.ip = args[0]
-
-        elif op == "JMP_IFNOT":
-            value = self.pop()
-            if not self.is_truthy(value):
-                self.ip = args[0]
-
-        # ── 数据构造 ──
-        elif op == "MAKE_ARRAY":
-            count = args[0]
-            arr = []
-            for _ in range(count):
-                arr.append(self.pop())
-            arr.reverse()
-            self.push(arr)
-
-        elif op == "MAKE_OBJECT":
-            count = args[0]
-            obj = {}
-            for _ in range(count):
-                value = self.pop()
-                key = self.pop()
-                obj[key] = value
-            self.push(obj)
-
-        # ── 特殊 ──
-        elif op == "PRINT":
-            value = self.pop()
-            print(self.to_str(value))
-
-        elif op == "HALT":
-            self.halted = True
-
+    def _op_ADD(self, args):
+        b, a = self.pop(), self.pop()
+        if isinstance(a, str) or isinstance(b, str):
+            self.push(self.to_str(a) + self.to_str(b))
         else:
-            raise VMError(f"未知指令: {op}")
+            self.push(a + b)
+
+    def _op_SUB(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a - b)
+
+    def _op_MUL(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a * b)
+
+    def _op_DIV(self, args):
+        b, a = self.pop(), self.pop()
+        if b == 0:
+            raise VMError("除以零")
+        if isinstance(a, int) and isinstance(b, int) and a % b == 0:
+            self.push(a // b)
+        else:
+            self.push(a / b)
+
+    def _op_MOD(self, args):
+        b, a = self.pop(), self.pop()
+        if b == 0:
+            raise VMError("除以零")
+        self.push(a % b)
+
+    def _op_POW(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a ** b)
+
+    def _op_NEG(self, args):
+        self.push(-self.pop())
+
+    def _op_EQ(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a == b)
+
+    def _op_NEQ(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a != b)
+
+    def _op_LT(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a < b)
+
+    def _op_GT(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a > b)
+
+    def _op_LTE(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a <= b)
+
+    def _op_GTE(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(a >= b)
+
+    def _op_AND(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(self.is_truthy(a) and self.is_truthy(b))
+
+    def _op_OR(self, args):
+        b, a = self.pop(), self.pop()
+        self.push(self.is_truthy(a) or self.is_truthy(b))
+
+    def _op_NOT(self, args):
+        self.push(not self.is_truthy(self.pop()))
+
+    def _op_LOAD(self, args):
+        name = self.constants[args[0]]
+        env = self.call_stack[-1].env if self.call_stack else self.global_env
+        self.push(env.get(name))
+
+    def _op_STORE(self, args):
+        name = self.constants[args[0]]
+        value = self.peek()
+        env = self.call_stack[-1].env if self.call_stack else self.global_env
+        env.set(name, value)
+
+    def _op_DEF(self, args):
+        name = self.constants[args[0]]
+        value = self.peek()
+        env = self.call_stack[-1].env if self.call_stack else self.global_env
+        env.define(name, value)
+
+    def _op_LOAD_INDEX(self, args):
+        index = self.pop()
+        obj = self.pop()
+        if isinstance(obj, list):
+            idx = int(index)
+            if idx < 0:
+                idx += len(obj)
+            self.push(obj[idx])
+        elif isinstance(obj, dict):
+            self.push(obj.get(index))
+        elif isinstance(obj, str):
+            idx = int(index)
+            if idx < 0:
+                idx += len(obj)
+            self.push(obj[idx])
+        else:
+            raise VMError(f"无法索引: {type(obj).__name__}")
+
+    def _op_STORE_INDEX(self, args):
+        index = self.pop()
+        obj = self.pop()
+        value = self.pop()
+        if isinstance(obj, list):
+            obj[int(index)] = value
+        elif isinstance(obj, dict):
+            obj[index] = value
+        else:
+            raise VMError(f"无法索引赋值: {type(obj).__name__}")
+        self.push(value)
+
+    def _op_LOAD_PROP(self, args):
+        prop = self.constants[args[0]]
+        obj = self.pop()
+        if isinstance(obj, dict):
+            val = obj.get(prop)
+            if val is not None:
+                self.push(val)
+            elif prop in ARRAY_METHODS:
+                self.push(lambda *a: ARRAY_METHODS[prop](obj, *a))
+            elif prop == "长度":
+                self.push(len(obj))
+            else:
+                self.push(None)
+        elif isinstance(obj, list):
+            if prop == "长度":
+                self.push(len(obj))
+            elif prop in ARRAY_METHODS:
+                self.push(lambda *a: ARRAY_METHODS[prop](obj, *a))
+            else:
+                raise VMError(f"数组没有属性 '{prop}'")
+        elif isinstance(obj, str):
+            if prop == "长度":
+                self.push(len(obj))
+            elif prop in STRING_METHODS:
+                self.push(lambda *a: STRING_METHODS[prop](obj, *a))
+            else:
+                raise VMError(f"字符串没有属性 '{prop}'")
+        else:
+            raise VMError(f"无法访问属性: {type(obj).__name__}")
+
+    def _op_STORE_PROP(self, args):
+        prop = self.constants[args[0]]
+        value = self.pop()
+        obj = self.pop()
+        if isinstance(obj, dict):
+            obj[prop] = value
+        else:
+            raise VMError(f"无法属性赋值: {type(obj).__name__}")
+        self.push(value)
+
+    def _op_CALL(self, args):
+        argc = args[0]
+        func_args = [self.pop() for _ in range(argc)]
+        func_args.reverse()
+        callee = self.pop()
+
+        # 检测尾调用：如果 callee 为用户定义函数且其指令最后为 RET 且当前帧即将返回
+        if isinstance(callee, dict) and "type" in callee and callee["type"] == "function":
+            # 参数检查
+            if len(func_args) != callee.get("arity", 0):
+                raise VMError(f"函数期望 {callee.get('arity',0)} 个参数，但得到 {len(func_args)} 个")
+            # 判断是否为尾调用（当前帧没有后续指令）
+            if self.ip == len(self.instructions):
+                # 复用当前帧的 locals
+                current_frame = self.call_stack[-1] if self.call_stack else None
+                if current_frame:
+                    # 写入新参数到当前帧的 locals（按顺序）
+                    for i, param in enumerate(callee.get("params", [])):
+                        current_frame.locals[i] = func_args[i]
+                    # 跳转到函数体开始
+                    self.instructions = callee["instructions"]
+                    self.constants = callee.get("constants", [])
+                    self.ip = 0
+                    return
+            # 常规函数调用，创建新帧
+            func_env = Environment(callee.get("closure", self.global_env))
+            for i, param in enumerate(callee.get("params", [])):
+                func_env.define(param, func_args[i])
+            frame = Frame(callee["instructions"], self.ip, env=func_env, constants=self.constants, locals_count=callee.get("locals_count", 0))
+            self.call_stack.append(frame)
+            self.instructions = callee["instructions"]
+            self.constants = callee.get("constants", [])
+            self.ip = 0
+            return
+        # 处理内置函数或可调用对象
+        result = callee(*func_args)
+        self.push(result)
+
+    def _op_RET(self, args):
+        # 返回值
+        ret_val = self.pop()
+        if not self.call_stack:
+            # 主程序返回，停止运行
+            self.halted = True
+            self.push(ret_val)
+            return
+        frame = self.call_stack.pop()
+        # 恢复调用者上下文
+        self.instructions = frame.instructions
+        self.constants = frame.constants
+        self.ip = frame.return_addr
+        self.push(ret_val)
+
+    def _op_JMP(self, args):
+        self.ip = args[0]
+
+    def _op_JMP_IF(self, args):
+        offset = args[0]
+        if self.is_truthy(self.pop()):
+            self.ip = offset
+
+    def _op_JMP_IFNOT(self, args):
+        offset = args[0]
+        if not self.is_truthy(self.pop()):
+            self.ip = offset
+
+    def _op_MAKE_ARRAY(self, args):
+        count = args[0]
+        arr = []
+        for _ in range(count):
+            arr.append(self.pop())
+        arr.reverse()
+        self.push(arr)
+
+    def _op_MAKE_OBJECT(self, args):
+        count = args[0]
+        obj = {}
+        for _ in range(count):
+            value = self.pop()
+            key = self.pop()
+            obj[key] = value
+        self.push(obj)
+
+    def _op_PRINT(self, args):
+        value = self.pop()
+        print(self.to_str(value))
+
+    def _op_HALT(self, args):
+        self.halted = True
+
+    def _op_BATCH_OP(self, args):
+        # args: [func_id, arg_count]
+        func_id = args[0]
+        arg_count = args[1]
+        # 弹出参数
+        params = [self.pop() for _ in range(arg_count)]
+        params.reverse()
+        # 调用批处理函数映射（在 builtins 中维护 BATCH_FUNC_MAP）
+        batch_func = BATCH_FUNC_MAP.get(func_id)
+        if batch_func is None:
+            raise VMError(f"未知批处理指令 ID: {func_id}")
+        result = batch_func(*params)
+        self.push(result)
 
 
 def run_file(path):

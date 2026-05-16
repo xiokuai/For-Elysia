@@ -24,11 +24,16 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller
+          pip install pyinstaller cython setuptools
+          python setup.py build_ext --inplace
 
       - name: Build zhiai.exe
         run: |
           pyinstaller zhiai_cli.py --name zhiai --onefile --icon=logo.ico --add-data "logo.ico;." --noconfirm
+
+      - name: Build zhiai_fast.exe
+        run: |
+          pyinstaller zhiai_cli.py --name zhiai_fast --onefile --icon=logo.ico --add-data "logo.ico;." --hidden-import zhiai._fastvm --noconfirm
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -47,6 +52,7 @@ jobs:
         with:
           files: |
             dist/zhiai.exe
+            dist/zhiai_fast.exe
             vscode-zhiai/*.vsix
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
