@@ -218,6 +218,27 @@ def _并行映射(func, arr):
         results = list(executor.map(wrapped, arr))
     return results
 
+import queue as _queue
+
+class Channel:
+    """线程安全的通道，用于协程/Actor间通信"""
+    def __init__(self, capacity=0):
+        self._q = _queue.Queue(maxsize=capacity)
+        
+    def 发送(self, item):
+        self._q.put(item)
+        return True
+        
+    def 接收(self):
+        return self._q.get()
+        
+    def __repr__(self):
+        return f"<通道 (大小={self._q.qsize()})>"
+
+def _创建通道(capacity=0):
+    """创建一个通信通道"""
+    return Channel(int(capacity))
+
 
 # ── 内置函数 ──────────────────────────────────────────────────────────
 
@@ -432,6 +453,11 @@ def _从字符码(code):
 def _错误(message):
     """抛出自定义错误"""
     raise ZhiAiError(str(message))
+
+def _断言(condition, message="断言失败"):
+    """契约编程：断言"""
+    if not condition:
+        raise ZhiAiError(f"契约破坏: {message}")
 
 
 def _退出(code=0):
@@ -789,11 +815,12 @@ BUILTINS = {
     "索引": _索引,
     # 系统
     "命令行参数": _命令行参数,
-    # 数据库
-    "数据库连接": _输出,
     # 网络
     "网络获取": _网络获取,
     "网络发送": _网络发送,
+    # 契约与并发
+    "断言": _断言,
+    "创建通道": _创建通道,
     # 图形界面
     "对话框": _对话框,
     "确认框": _确认框,
@@ -1093,46 +1120,6 @@ def batch_matrix_mul(m1, m2):
 
 def batch_matrix_transpose(m):
     """二维矩阵转置"""
-def batch_matrix_transpose(m):
-    if not isinstance(m, list) or not m or not isinstance(m[0], list):
-        raise RuntimeError("矩阵转置：参数必须是二维数组")
-    return [list(x) for x in zip(*m)]
-
-
-def batch_regex_match(pattern, text):
-    """正则表达式匹配，返回所有匹配项的数组"""
-    import re
-    return re.findall(str(pattern), str(text))
-
-
-def batch_regex_replace(pattern, repl, text):
-    """正则表达式替换，返回替换后的文本"""
-    import re
-    return re.sub(str(pattern), str(repl), str(text))
-
-
-BATCH_FUNC_MAP = {
-    1: _筛选,
-    2: _映射,
-    3: array_sort,
-    4: str_split,
-    5: str_replace,
-    6: batch_matrix_add,
-    7: batch_matrix_mul,
-    8: batch_matrix_transpose,
-    9: batch_regex_match,
-    10: batch_regex_replace,
-}
-
-BUILTINS.update({
-    "矩阵相加": batch_matrix_add,
-    "矩阵相乘": batch_matrix_mul,
-    "矩阵转置": batch_matrix_transpose,
-    "正则匹配": batch_regex_match,
-    "正则替换": batch_regex_replace,
-})
-
-def batch_matrix_transpose(m):
     if not isinstance(m, list) or not m or not isinstance(m[0], list):
         raise RuntimeError("矩阵转置：参数必须是二维数组")
     return [list(x) for x in zip(*m)]

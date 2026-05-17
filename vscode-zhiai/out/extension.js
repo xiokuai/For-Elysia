@@ -84,7 +84,7 @@ function activate(context) {
             const lineText = document.lineAt(position.line).text;
             const wordBeforeTrigger = lineText.substring(0, position.character).trim();
             if (wordBeforeTrigger.endsWith('.')) {
-                const objectMethods = ['添加', '连接', '筛选', '查找', '分割', '替换', '大写', '小写', '长度', '执行', '查询', '关闭', '获取', '取值', '是空', '是有'];
+                const objectMethods = ['添加', '连接', '筛选', '查找', '分割', '替换', '大写', '小写', '长度', '执行', '查询', '关闭', '获取', '取值', '是空', '是有', '发送', '接收'];
                 objectMethods.forEach(method => {
                     const item = new vscode.CompletionItem(method, vscode.CompletionItemKind.Method);
                     completionItems.push(item);
