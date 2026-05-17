@@ -1,0 +1,33 @@
+// 致爱 (Zhiai) 编程语言 — 数据库操作演示
+// 使用内置的 SQLite 驱动进行数据持久化
+
+输出("正在初始化本地数据库...")
+
+// 1. 连接数据库 (如果文件不存在会自动创建)
+让 库 = 数据库连接("我的数据.db")
+
+// 2. 创建表格
+输出("步骤1: 创建用户表...")
+库.执行("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+
+// 3. 清理旧数据 (演示用)
+库.执行("DELETE FROM users")
+
+// 4. 插入数据
+输出("步骤2: 插入测试数据...")
+库.执行("INSERT INTO users (name, age) VALUES (?, ?)", ["小明", 18])
+库.执行("INSERT INTO users (name, age) VALUES (?, ?)", ["小红", 20])
+库.执行("INSERT INTO users (name, age) VALUES (?, ?)", ["大志", 25])
+
+// 5. 查询数据
+输出("步骤3: 执行查询...")
+让 所有用户 = 库.查询("SELECT * FROM users WHERE age >= 20")
+
+输出("查询结果 (年龄 >= 20):")
+对于 每个 用户 在 所有用户 中
+    输出(" - 姓名: " + 用户["name"] + ", 年龄: " + 转换文字(用户["age"]))
+结束
+
+// 6. 关闭连接
+库.关闭()
+输出("数据库操作完成，连接已关闭。")

@@ -789,6 +789,8 @@ BUILTINS = {
     "索引": _索引,
     # 系统
     "命令行参数": _命令行参数,
+    # 数据库
+    "数据库连接": _数据库连接,
     # 网络
     "网络获取": _网络获取,
     "网络发送": _网络发送,
@@ -1091,6 +1093,44 @@ def batch_matrix_mul(m1, m2):
 
 def batch_matrix_transpose(m):
     """二维矩阵转置"""
+    if not isinstance(m, list) or not m or not isinstance(m[0], list):
+        raise RuntimeError("矩阵转置：参数必须是二维数组")
+    return [list(x) for x in zip(*m)]
+
+
+def batch_regex_match(pattern, text):
+    """正则表达式匹配，返回所有匹配项的数组"""
+    import re
+    return re.findall(str(pattern), str(text))
+
+
+def batch_regex_replace(pattern, repl, text):
+    """正则表达式替换，返回替换后的文本"""
+    import re
+    return re.sub(str(pattern), str(repl), str(text))
+
+
+BATCH_FUNC_MAP = {
+    1: _筛选,
+    2: _映射,
+    3: array_sort,
+    4: str_split,
+    5: str_replace,
+    6: batch_matrix_add,
+    7: batch_matrix_mul,
+    8: batch_matrix_transpose,
+    9: batch_regex_match,
+    10: batch_regex_replace,
+}
+
+BUILTINS.update({
+    "矩阵相加": batch_matrix_add,
+    "矩阵相乘": batch_matrix_mul,
+    "矩阵转置": batch_matrix_transpose,
+    "正则匹配": batch_regex_match,
+    "正则替换": batch_regex_replace,
+})
+
     if not isinstance(m, list) or not m or not isinstance(m[0], list):
         raise RuntimeError("矩阵转置：参数必须是二维数组")
     return [list(x) for x in zip(*m)]
