@@ -74,7 +74,7 @@ def format_code(code):
 
 def main():
     if len(sys.argv) < 2:
-        print("致爱代码格式化工具 v1.0.7")
+        print("致爱代码格式化工具 v1.0.8")
         print("用法: python zhiai_fmt.py <文件.za>")
         return
         

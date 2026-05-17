@@ -1,7 +1,7 @@
 # 致爱编程语言 — Bug 分析报告
 
 > 分析日期: 2026-05-17
-> 涵盖版本: v1.0.7 (Elysia Edition)
+> 涵盖版本: v1.0.8 (Elysia Edition)
 > 分析范围: `zhiai/` 核心模块 (lexer, parser, interpreter, vm, vm_jit, jit, builtins, gc, shapes)
 
 ---
