@@ -317,6 +317,56 @@ def _列表选择(items, prompt="请选择", title="致爱"):
     return result["val"]
 
 
+def _创建窗口(title="致爱窗口", width=400, height=300):
+    """创建一个 GUI 窗口"""
+    root = _tk.Tk()
+    root.title(title)
+    # 居中显示
+    sw = root.winfo_screenwidth()
+    sh = root.winfo_screenheight()
+    x = (sw - width) / 2
+    y = (sh - height) / 2
+    root.geometry(f"{int(width)}x{int(height)}+{int(x)}+{int(y)}")
+    return root
+
+def _创建按钮(parent, text="按钮", row=0, col=0, callback=None, colspan=1):
+    """在窗口中创建一个按钮"""
+    if callback:
+        callback = wrap_callable(callback)
+    btn = _tk.Button(parent, text=text, command=callback, font=("微软雅黑", 12))
+    btn.grid(row=int(row), column=int(col), columnspan=int(colspan), sticky="nsew", padx=2, pady=2)
+    # 让行列可伸缩
+    parent.grid_rowconfigure(int(row), weight=1)
+    parent.grid_columnconfigure(int(col), weight=1)
+    return btn
+
+def _创建文本框(parent, row=0, col=0, colspan=1):
+    """在窗口中创建一个文本输入框"""
+    entry = _tk.Entry(parent, font=("Arial", 20), justify="right", bd=5)
+    entry.grid(row=int(row), column=int(col), columnspan=int(colspan), sticky="nsew", padx=5, pady=10)
+    return entry
+
+def _设置文本(widget, text):
+    """设置控件的显示文本"""
+    if hasattr(widget, "delete"):
+        widget.delete(0, _tk.END)
+        widget.insert(0, str(text))
+    elif hasattr(widget, "config"):
+        widget.config(text=str(text))
+
+def _获取文本(widget):
+    """获取控件当前的文本内容"""
+    if hasattr(widget, "get"):
+        return widget.get()
+    elif hasattr(widget, "cget"):
+        return widget.cget("text")
+    return ""
+
+def _进入主循环(root):
+    """启动 GUI 事件循环"""
+    root.mainloop()
+
+
 # ── 对象操作 ──────────────────────────────────────────────────────────
 
 def _对象键(obj):
@@ -516,6 +566,12 @@ BUILTINS = {
     "确认框": _确认框,
     "输入框": _输入框,
     "列表选择": _列表选择,
+    "创建窗口": _创建窗口,
+    "创建按钮": _创建按钮,
+    "创建文本框": _创建文本框,
+    "设置文本": _设置文本,
+    "获取文本": _获取文本,
+    "进入主循环": _进入主循环,
 }
 
 
