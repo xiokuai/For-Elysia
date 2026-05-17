@@ -73,6 +73,21 @@ function activate(context) {
             tryCatchSnippet.filterText = '尝试';
             tryCatchSnippet.detail = '异常捕获';
             completionItems.push(tryCatchSnippet);
+            const classSnippet = new vscode.CompletionItem('类...结束', vscode.CompletionItemKind.Snippet);
+            classSnippet.insertText = new vscode.SnippetString('类 ${1:名称}\n\t函数 构造(${2:参数})\n\t\t$0\n\t结束\n结束');
+            classSnippet.filterText = '类';
+            classSnippet.detail = '定义面向对象类';
+            completionItems.push(classSnippet);
+            const ifelseSnippet = new vscode.CompletionItem('如果...否则...结束', vscode.CompletionItemKind.Snippet);
+            ifelseSnippet.insertText = new vscode.SnippetString('如果 ${1:条件} 则\n\t$2\n否则\n\t$0\n结束');
+            ifelseSnippet.filterText = '如果';
+            ifelseSnippet.detail = '分支控制流（含否则）';
+            completionItems.push(ifelseSnippet);
+            const importSnippet = new vscode.CompletionItem('导入(...)', vscode.CompletionItemKind.Snippet);
+            importSnippet.insertText = new vscode.SnippetString('让 ${1:模块} = 导入("${2:文件名}.za")');
+            importSnippet.filterText = '导入';
+            importSnippet.detail = '导入跨文件模块';
+            completionItems.push(importSnippet);
             return completionItems;
         }
     });
@@ -182,7 +197,22 @@ function activate(context) {
         '输出': '**输出(内容, ...)**\n\n在控制台打印一条或多条信息。',
         '输入': '**输入([提示文字])**\n\n从控制台读取用户输入，返回字符串。',
         '让': '**让 变量名 = 值**\n\n声明一个可变变量。',
-        '常量': '**常量 名 = 值**\n\n声明一个不可修改的常量。'
+        '常量': '**常量 名 = 值**\n\n声明一个不可修改的常量。',
+        '时间': '**时间()**\n\n获取当前的高精度Unix时间戳（秒）。\n\n*示例：`让 t = 时间()`*',
+        '格式化时间': '**格式化时间(时间戳, 格式字符串)**\n\n按照指定格式格式化时间戳。\n\n*示例：`输出(格式化时间(时间(), "%Y-%m-%d %H:%M:%S"))`*',
+        '解析JSON': '**解析JSON(json字符串)**\n\n解析标准的 JSON 字符串，返回对应的致爱对象或数组。\n\n*示例：`让 数据 = 解析JSON("{\\"值\\": 100}")`*',
+        '生成JSON': '**生成JSON(对象或数组)**\n\n将致爱对象或数组转义输出为标准的 JSON 文本。\n\n*示例：`让 文本 = 生成JSON(数据)`*',
+        '长度': '**长度(容器)**\n\n返回数组、文字或对象的长度/大小。\n\n*示例：`输出(长度("我爱致爱")) // 输出 4`*',
+        '包含': '**包含(容器, 元素)**\n\n检查数组或文字中是否包含指定的元素或子字符串，返回布尔值。\n\n*示例：`如果 包含("致爱语言", "致爱") 则 ...`*',
+        '添加': '**添加(数组, 元素)**\n\n在数组的末尾添加一个新元素。\n\n*示例：`添加(我的数组, 99)`*',
+        '删除': '**删除(数组, 索引)**\n\n删除数组中指定索引处的元素并返回它。\n\n*示例：`让 被删元素 = 删除(我的数组, 0)`*',
+        '截取': '**截取(文字或数组, 起始索引, 结束索引)**\n\n截取并返回部分子文字或子数组。\n\n*示例：`输出(截取("致爱语言", 0, 2)) // 输出 "致爱"`*',
+        '文件存在': '**文件存在(路径)**\n\n检查指定路径的文件是否存在，返回布尔值。\n\n*示例：`如果 文件存在("数据.json") 则 ...`*',
+        '读文件': '**读文件(路径)**\n\n以 UTF-8 编码读取并返回指定文件的全部文本内容。\n\n*示例：`让 内容 = 读文件("输入.txt")`*',
+        '写文件': '**写文件(路径, 内容)**\n\n以 UTF-8 编码将内容写入文件（若文件存在则覆盖）。\n\n*示例：`写文件("输出.txt", "你好，致爱！")`*',
+        '类型': '**类型(值)**\n\n返回表示该值数据类型的文字（如 `"number"`, `"string"`, `"list"`, `"dict"`, `"boolean"`, `"null"`）。\n\n*示例：`如果 类型(x) == "string" 则 ...`*',
+        '命令行参数': '**命令行参数()**\n\n返回执行致爱程序时传入的命令行参数数组。\n\n*示例：`让 参数 = 命令行参数()`*',
+        '导入': '**导入(模块名称)**\n\n载入指定的致爱脚本模块，返回该模块导出的全局对象。\n\n*示例：`让 工具 = 导入("utils.za")`*'
     };
     const hoverProvider = vscode.languages.registerHoverProvider('zhiai', {
         provideHover(document, position) {
@@ -211,11 +241,40 @@ function activate(context) {
                 if (classMatch) {
                     symbols.push(new vscode.DocumentSymbol(classMatch[1], '类定义', vscode.SymbolKind.Class, line.range, line.range));
                 }
+                // 匹配变量定义
+                const varMatch = line.text.match(/让\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)\s*=/);
+                if (varMatch) {
+                    symbols.push(new vscode.DocumentSymbol(varMatch[1], '可变变量', vscode.SymbolKind.Variable, line.range, line.range));
+                }
+                // 匹配常量定义
+                const constMatch = line.text.match(/常量\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)\s*=/);
+                if (constMatch) {
+                    symbols.push(new vscode.DocumentSymbol(constMatch[1], '只读常量', vscode.SymbolKind.Constant, line.range, line.range));
+                }
             }
             return symbols;
         }
     });
     context.subscriptions.push(symbolProvider);
+    // ─── 跳转到定义 (Definition Provider) ───────────────────────────
+    const definitionProvider = vscode.languages.registerDefinitionProvider('zhiai', {
+        provideDefinition(document, position, token) {
+            const range = document.getWordRangeAtPosition(position);
+            if (!range)
+                return null;
+            const word = document.getText(range);
+            for (let i = 0; i < document.lineCount; i++) {
+                const line = document.lineAt(i);
+                const funcMatch = line.text.match(new RegExp(`函数\\s+${word}\\s*\\(`));
+                const classMatch = line.text.match(new RegExp(`类\\s+${word}\\b`));
+                if (funcMatch || classMatch) {
+                    return new vscode.Location(document.uri, line.range);
+                }
+            }
+            return null;
+        }
+    });
+    context.subscriptions.push(definitionProvider);
     // ─── 参数提示 (Signature Help Provider) ──────────────────────
     const signatureProvider = vscode.languages.registerSignatureHelpProvider('zhiai', {
         provideSignatureHelp(document, position, token, context) {
@@ -247,7 +306,6 @@ function activate(context) {
             const range = document.getWordRangeAtPosition(position);
             const oldName = document.getText(range);
             const edit = new vscode.WorkspaceEdit();
-            // 简单实现：全文件替换匹配的单词
             for (let i = 0; i < document.lineCount; i++) {
                 const line = document.lineAt(i);
                 let startIdx = 0;
