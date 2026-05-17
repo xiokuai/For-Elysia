@@ -2,7 +2,7 @@
   "name": "zhiai",
   "displayName": "致爱 (Zhiai) Language Support",
   "description": "Syntax highlighting and autocomplete for Zhiai programming language",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "publisher": "zhiai-team",
   "icon": "logo.png",
   "repository": "https://github.com/example/zhiai",
