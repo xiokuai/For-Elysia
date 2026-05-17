@@ -71,10 +71,22 @@ class Environment:
     def define(self, name, value):
         self.vars[name] = value
 
+OPCODE_LIST = [
+    "PUSH", "POP", "DUP", "ADD", "SUB", "MUL", "DIV", "MOD", "POW", "NEG",
+    "EQ", "NEQ", "LT", "GT", "LTE", "GTE", "AND", "OR", "NOT", "LOAD",
+    "STORE", "DEF", "LOAD_INDEX", "STORE_INDEX", "LOAD_PROP", "STORE_PROP",
+    "CALL", "RET", "JMP", "JMP_IF", "JMP_IFNOT", "HALT", "BATCH_OP", "TRY",
+    "END_TRY", "RAISE", "MAKE_CLASS", "MAKE_ARRAY", "MAKE_OBJECT", "PRINT",
+    "NEW", "BREAKPOINT", "MAKE_FUNC", "CALL_METHOD", "LOAD_LOCAL", "STORE_LOCAL",
+    "LOAD_GLOBAL", "STORE_GLOBAL", "FAST_ADD", "FAST_SUB", "BINOP"
+]
+OPCODE_MAP = {op: i for i, op in enumerate(OPCODE_LIST)}
+
+
 class Frame:
     """函数调用帧"""
 
-    def __init__(self, instructions, return_addr, env=None, constants=None, locals_count=0):
+    def __init__(self, instructions, return_addr, env=None, constants=None, locals_count=0, is_constructor=False, instance=None):
         self.instructions = instructions
         self.return_addr = return_addr
         self.env = env
@@ -84,6 +96,40 @@ class Frame:
         self.locals_count = locals_count
         # 异常处理栈: (handler_ip, stack_size)
         self.exception_handlers = []
+        self.is_constructor = is_constructor
+        self.instance = instance
+
+
+class FramePool:
+    """对象池，用于重用 Frame 实例以降低 GC 和对象分配开销"""
+    def __init__(self):
+        self.pool = []
+
+    def acquire(self, instructions, return_addr, env=None, constants=None, locals_count=0, is_constructor=False, instance=None):
+        if self.pool:
+            frame = self.pool.pop()
+            frame.instructions = instructions
+            frame.return_addr = return_addr
+            frame.env = env
+            frame.constants = constants
+            if frame.locals_count >= locals_count:
+                for i in range(locals_count):
+                    frame.locals[i] = None
+            else:
+                frame.locals = [None] * locals_count
+            frame.locals_count = locals_count
+            frame.exception_handlers.clear()
+            frame.is_constructor = is_constructor
+            frame.instance = instance
+            return frame
+        else:
+            return Frame(instructions, return_addr, env, constants, locals_count, is_constructor, instance)
+
+    def release(self, frame):
+        frame.env = None
+        frame.constants = None
+        frame.instance = None
+        self.pool.append(frame)
 
 
 class Instance:
@@ -122,6 +168,8 @@ class VM:
         self.instructions = []
         self.constants = []
         self.halted = False
+        self.exception_handlers = []
+        self.frame_pool = FramePool()
         # 指令分发表，映射 opcode 到实现方法
         self._dispatch = {
             "PUSH": self._op_PUSH,
@@ -161,8 +209,13 @@ class VM:
             "END_TRY": self._op_END_TRY,
             "RAISE": self._op_RAISE,
             "MAKE_CLASS": self._op_MAKE_CLASS,
+            "MAKE_ARRAY": self._op_MAKE_ARRAY,
+            "MAKE_OBJECT": self._op_MAKE_OBJECT,
+            "PRINT": self._op_PRINT,
             "NEW": self._op_NEW,
             "BREAKPOINT": self._op_BREAKPOINT,
+            "MAKE_FUNC": self._op_MAKE_FUNC,
+            "CALL_METHOD": self._op_CALL_METHOD,
             # 特化指令
             "LOAD_LOCAL": self._op_LOAD_LOCAL,
             "STORE_LOCAL": self._op_STORE_LOCAL,
@@ -172,6 +225,13 @@ class VM:
             "FAST_SUB": self._op_FAST_SUB,
             "BINOP": self._op_BINOP,
         }
+
+        # 构建整数索引跳转表
+        self._dispatch_list = [None] * len(OPCODE_LIST)
+        for op_str, handler in self._dispatch.items():
+            idx = OPCODE_MAP.get(op_str)
+            if idx is not None:
+                self._dispatch_list[idx] = handler
 
         # 注册内置函数
         for name, func in BUILTINS.items():
@@ -222,7 +282,19 @@ class VM:
         if isinstance(bytecode, str):
             bytecode = json.loads(bytecode)
         self.constants = bytecode.get("constants", [])
-        self.instructions = bytecode.get("instructions", [])
+        
+        # 将指令中的字符串 opcode 转换为整数，提高分发效率
+        loaded_instructions = bytecode.get("instructions", [])
+        self.instructions = []
+        for instr in loaded_instructions:
+            if instr and isinstance(instr[0], str):
+                op_int = OPCODE_MAP.get(instr[0])
+                if op_int is None:
+                    raise VMError(f"未知指令字符串: {instr[0]}")
+                self.instructions.append([op_int] + list(instr[1:]))
+            else:
+                self.instructions.append(instr)
+
         user_globals = bytecode.get("globals", {})
         for k, v in user_globals.items():
             self.global_env.define(k, v)
@@ -237,16 +309,13 @@ class VM:
         self.ip = 0
         self.halted = False
 
+        dispatch_list = self._dispatch_list
         while not self.halted and self.ip < len(self.instructions):
             try:
                 instr = self.instructions[self.ip]
-                op = instr[0]
+                op_int = instr[0]
                 self.ip += 1
-                handler = self._dispatch.get(op)
-                if handler is None:
-                    raise VMError(f"未知指令: {op}")
-                # 性能优化：直接传递整个指令，避免切片产生新列表
-                handler(instr)
+                dispatch_list[op_int](instr)
             except Exception as e:
                 self._handle_exception(e)
 
@@ -262,10 +331,20 @@ class VM:
                 self.push(str(e))
                 self.ip = handler_ip
                 return
+        else:
+            if self.exception_handlers:
+                handler_ip, saved_stack_size = self.exception_handlers.pop()
+                # 恢复栈深度，压入错误对象
+                while len(self.stack) > saved_stack_size:
+                    self.pop()
+                self.push(str(e))
+                self.ip = handler_ip
+                return
         
         # 如果没有局部处理，则向上传播
         if self.call_stack:
-            self.call_stack.pop()
+            frame = self.call_stack.pop()
+            self.frame_pool.release(frame)
             if self.call_stack:
                 last_frame = self.call_stack[-1]
                 self.instructions = last_frame.instructions
@@ -276,6 +355,8 @@ class VM:
         
         # 顶层异常
         print(f"致命错误: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         self.halted = True
 
     def push(self, value):
@@ -406,12 +487,12 @@ class VM:
         self.push(not self.is_truthy(self.pop()))
 
     def _op_LOAD(self, args):
-        name = self.constants[args[0]]
+        name = self.constants[args[1]]
         env = self.call_stack[-1].env if self.call_stack else self.global_env
         self.push(env.get(name))
 
     def _op_STORE(self, args):
-        name = self.constants[args[0]]
+        name = self.constants[args[1]]
         value = self.peek()
         env = self.call_stack[-1].env if self.call_stack else self.global_env
         env.set(name, value)
@@ -426,13 +507,13 @@ class VM:
         self.push(self.call_stack[-1].locals[instr[1]])
 
     def _op_STORE_LOCAL(self, instr):
-        self.call_stack[-1].locals[instr[1]] = self.pop()
+        self.call_stack[-1].locals[instr[1]] = self.peek()
 
     def _op_LOAD_GLOBAL(self, instr):
         self.push(self.global_env.get(self.constants[instr[1]]))
 
     def _op_STORE_GLOBAL(self, instr):
-        self.global_env.set(self.constants[instr[1]], self.pop())
+        self.global_env.set(self.constants[instr[1]], self.peek())
 
     def _op_BINOP(self, instr):
         op = instr[1]
@@ -498,8 +579,8 @@ class VM:
 
     def _op_STORE_PROP(self, instr):
         name = self.constants[instr[1]]
-        val = self.pop()
         obj = self.pop()
+        val = self.pop()
         if isinstance(obj, Instance):
             obj.set_prop(name, val)
         elif isinstance(obj, dict):
@@ -514,34 +595,66 @@ class VM:
         func_args.reverse()
         callee = self.pop()
 
-        # 检测尾调用：如果 callee 为用户定义函数且其指令最后为 RET 且当前帧即将返回
-        if isinstance(callee, dict) and "type" in callee and callee["type"] == "function":
-            # 参数检查
-            if len(func_args) != callee.get("arity", 0):
-                raise VMError(f"函数期望 {callee.get('arity',0)} 个参数，但得到 {len(func_args)} 个")
-            # 判断是否为尾调用（当前帧没有后续指令）
-            if self.ip == len(self.instructions):
-                # 复用当前帧的 locals
-                current_frame = self.call_stack[-1] if self.call_stack else None
-                if current_frame:
-                    # 写入新参数到当前帧的 locals（按顺序）
-                    for i, param in enumerate(callee.get("params", [])):
-                        current_frame.locals[i] = func_args[i]
-                    # 跳转到函数体开始
-                    self.instructions = callee["instructions"]
-                    self.constants = callee.get("constants", [])
-                    self.ip = 0
+        if isinstance(callee, dict) and "type" in callee:
+            if callee["type"] == "class":
+                # 类实例化
+                instance = Instance(callee)
+                if "构造" in callee["methods"]:
+                    constructor = callee["methods"]["构造"]
+                    if len(func_args) != constructor.get("arity", 0):
+                        raise VMError(f"构造函数期望 {constructor.get('arity', 0)} 个参数，但得到 {len(func_args)} 个")
+                    func_env = Environment(constructor.get("closure", self.global_env))
+                    func_env.define("这", instance)
+                    for i, param in enumerate(constructor.get("params", [])):
+                        func_env.define(param, func_args[i])
+                    frame = self.frame_pool.acquire(
+                        constructor["instructions"],
+                        self.ip,
+                        env=func_env,
+                        constants=self.constants,
+                        locals_count=constructor.get("locals_count", 0),
+                        is_constructor=True,
+                        instance=instance
+                    )
+                    self.call_stack.append(frame)
+                    for i in range(len(func_args)):
+                        frame.locals[i] = func_args[i]
+                    self.instructions = constructor["instructions"]
+                    self.constants = constructor.get("constants", [])
+                    self.ip = constructor.get("entry_ip", 0)
                     return
-            # 常规函数调用，创建新帧
-            func_env = Environment(callee.get("closure", self.global_env))
-            for i, param in enumerate(callee.get("params", [])):
-                func_env.define(param, func_args[i])
-            frame = Frame(callee["instructions"], self.ip, env=func_env, constants=self.constants, locals_count=callee.get("locals_count", 0))
-            self.call_stack.append(frame)
-            self.instructions = callee["instructions"]
-            self.constants = callee.get("constants", [])
-            self.ip = 0
-            return
+                else:
+                    self.push(instance)
+                    return
+
+            if callee["type"] == "function":
+                # 参数检查
+                if len(func_args) != callee.get("arity", 0):
+                    raise VMError(f"函数期望 {callee.get('arity',0)} 个参数，但得到 {len(func_args)} 个")
+                # 判断是否为尾调用（当前帧没有后续指令）
+                if self.ip == len(self.instructions):
+                    # 复用当前帧的 locals
+                    current_frame = self.call_stack[-1] if self.call_stack else None
+                    if current_frame:
+                        for i, param in enumerate(callee.get("params", [])):
+                            current_frame.locals[i] = func_args[i]
+                        self.instructions = callee["instructions"]
+                        self.constants = callee.get("constants", [])
+                        self.ip = callee.get("entry_ip", 0)
+                        return
+                # 常规函数调用，创建新帧
+                func_env = Environment(callee.get("closure", self.global_env))
+                for i, param in enumerate(callee.get("params", [])):
+                    func_env.define(param, func_args[i])
+                frame = self.frame_pool.acquire(callee["instructions"], self.ip, env=func_env, constants=self.constants, locals_count=callee.get("locals_count", 0))
+                self.call_stack.append(frame)
+                for i in range(len(func_args)):
+                    frame.locals[i] = func_args[i]
+                self.instructions = callee["instructions"]
+                self.constants = callee.get("constants", [])
+                self.ip = callee.get("entry_ip", 0)
+                return
+
         # 处理内置函数或可调用对象
         result = callee(*func_args)
         self.push(result)
@@ -552,14 +665,21 @@ class VM:
         if not self.call_stack:
             # 主程序返回，停止运行
             self.halted = True
-            self.push(ret_val)
+            if self.stack and self.stack[-1] is ret_val:
+                pass
+            else:
+                self.push(ret_val)
             return
         frame = self.call_stack.pop()
         # 恢复调用者上下文
         self.instructions = frame.instructions
         self.constants = frame.constants
         self.ip = frame.return_addr
-        self.push(ret_val)
+        if frame.is_constructor:
+            self.push(frame.instance)
+        else:
+            self.push(ret_val)
+        self.frame_pool.release(frame)
 
     def _op_JMP(self, instr):
         self.ip = instr[1]
@@ -617,12 +737,15 @@ class VM:
         if self.call_stack:
             self.call_stack[-1].exception_handlers.append((handler_ip, len(self.stack)))
         else:
-            # 顶层也可以有简单的异常处理逻辑（视具体实现而定）
-            pass
+            self.exception_handlers.append((handler_ip, len(self.stack)))
 
     def _op_END_TRY(self, instr):
-        if self.call_stack and self.call_stack[-1].exception_handlers:
-            self.call_stack[-1].exception_handlers.pop()
+        if self.call_stack:
+            if self.call_stack[-1].exception_handlers:
+                self.call_stack[-1].exception_handlers.pop()
+        else:
+            if self.exception_handlers:
+                self.exception_handlers.pop()
 
     def _op_RAISE(self, instr):
         msg = self.pop()
@@ -642,8 +765,123 @@ class VM:
         # 检查是否有构造函数
         if "构造" in klass["methods"]:
             constructor = klass["methods"]["构造"]
-            # 自动调用构造函数（这里简化逻辑，实际需要压入参数并 CALL）
+            # 自动调用构造函数（这里已在 _op_CALL 中完整实现，此处保留占位）
             pass
+
+    def _op_MAKE_FUNC(self, instr):
+        name = self.constants[instr[1]]
+        arity = instr[2]
+        param_count = instr[3]
+        params = [self.constants[instr[4 + i]] for i in range(param_count)]
+        entry_ip = instr[4 + param_count]
+        
+        func = {
+            "type": "function",
+            "name": name,
+            "arity": arity,
+            "params": params,
+            "entry_ip": entry_ip,
+            "instructions": self.instructions,
+            "constants": self.constants,
+            "closure": self.call_stack[-1].env if self.call_stack else self.global_env,
+            "locals_count": 50
+        }
+        
+        env = self.call_stack[-1].env if self.call_stack else self.global_env
+        env.define(name, func)
+        self.push(func)
+
+    def _op_CALL_METHOD(self, instr):
+        method_name = self.constants[instr[1]]
+        argc = instr[2]
+        func_args = [self.pop() for _ in range(argc)]
+        func_args.reverse()
+        obj = self.pop()
+
+        if isinstance(obj, Instance):
+            method = obj.klass["methods"].get(method_name)
+            if method is None:
+                raise VMError(f"类 '{obj.klass['name']}' 没有方法 '{method_name}'")
+            if len(func_args) != method.get("arity", 0):
+                raise VMError(f"方法 '{method_name}' 期望 {method.get('arity',0)} 个参数，但得到 {len(func_args)} 个")
+            func_env = Environment(method.get("closure", self.global_env))
+            func_env.define("这", obj)
+            for i, param in enumerate(method.get("params", [])):
+                func_env.define(param, func_args[i])
+            frame = self.frame_pool.acquire(
+                method["instructions"],
+                self.ip,
+                env=func_env,
+                constants=self.constants,
+                locals_count=method.get("locals_count", 0)
+            )
+            self.call_stack.append(frame)
+            for i in range(len(func_args)):
+                frame.locals[i] = func_args[i]
+            self.instructions = method["instructions"]
+            self.constants = method.get("constants", [])
+            self.ip = method.get("entry_ip", 0)
+            return
+
+        elif isinstance(obj, list):
+            if method_name in ARRAY_METHODS:
+                res = ARRAY_METHODS[method_name](obj, *func_args)
+                self.push(res)
+                return
+            elif method_name == "长度":
+                self.push(len(obj))
+                return
+            else:
+                raise VMError(f"数组没有方法 '{method_name}'")
+
+        elif isinstance(obj, str):
+            if method_name in STRING_METHODS:
+                res = STRING_METHODS[method_name](obj, *func_args)
+                self.push(res)
+                return
+            elif method_name == "长度":
+                self.push(len(obj))
+                return
+            else:
+                raise VMError(f"字符串没有方法 '{method_name}'")
+
+        elif isinstance(obj, dict):
+            if method_name in obj:
+                method = obj[method_name]
+                if isinstance(method, dict) and "type" in method and method["type"] == "function":
+                    func_env = Environment(method.get("closure", self.global_env))
+                    func_env.define("这", obj)
+                    for i, param in enumerate(method.get("params", [])):
+                        func_env.define(param, func_args[i])
+                    frame = Frame(
+                        method["instructions"],
+                        self.ip,
+                        env=func_env,
+                        constants=self.constants,
+                        locals_count=method.get("locals_count", 0)
+                    )
+                    self.call_stack.append(frame)
+                    self.instructions = method["instructions"]
+                    self.constants = method.get("constants", [])
+                    self.ip = method.get("entry_ip", 0)
+                    return
+                elif callable(method):
+                    res = method(*func_args)
+                    self.push(res)
+                    return
+                else:
+                    raise VMError(f"属性 '{method_name}' 不是可调用的方法")
+            else:
+                raise VMError(f"对象没有属性或方法 '{method_name}'")
+
+        else:
+            method = getattr(obj, method_name, None)
+            if callable(method):
+                res = method(*func_args)
+                self.push(res)
+                return
+            else:
+                raise VMError(f"类型 {type(obj).__name__} 没有方法或属性 '{method_name}'")
 
 
     def _op_BREAKPOINT(self, instr):

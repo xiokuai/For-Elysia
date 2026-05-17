@@ -205,7 +205,7 @@ def main():
         cmd_eval(args[1])
     elif cmd == "install": cmd_install()
     elif cmd == "uninstall": cmd_uninstall()
-    elif cmd in ("-v", "--version"): print("致爱 v1.7.0 (Performance Optimized)")
+    elif cmd in ("-v", "--version"): print("致爱 v1.0.5 (Performance Optimized)")
     elif cmd in ("-h", "--help"): print(__doc__)
     else:
         if os.path.exists(cmd):

@@ -43,9 +43,9 @@ zhiai                   # 直接进入中文编程交互世界
 
 ---
 
-## 🔥 v1.7.0 性能革命 (Current Version)
+## 🔥 v1.0.5 性能革命 (Current Version)
 
-在 v1.7.0 版本中，我们引入了多项顶级编程语言的优化技术：
+在 v1.0.5 版本中，我们引入了多项顶级编程语言的优化技术：
 
 - **隐藏类 (Hidden Classes / Shapes)**：重构了对象模型，属性访问性能提升 300%。
 - **指令特化 (Instruction Specialization)**：引入复合指令集，大幅减少虚拟机分派开销。

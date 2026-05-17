@@ -243,6 +243,9 @@ def _网络发送(url, data_dict):
 
 def _对话框(message, title="致爱"):
     """显示一个简单的消息对话框"""
+    if _os.environ.get("ZHIAI_HEADLESS") == "1":
+        print(f"[对话框] {title}: {message}")
+        return
     root = _tk.Tk()
     root.withdraw()
     _mb.showinfo(title, str(message))
@@ -250,6 +253,9 @@ def _对话框(message, title="致爱"):
 
 def _确认框(message, title="致爱"):
     """显示一个确认对话框，返回布尔值"""
+    if _os.environ.get("ZHIAI_HEADLESS") == "1":
+        print(f"[确认框] {title}: {message} -> 默认: 真")
+        return True
     root = _tk.Tk()
     root.withdraw()
     res = _mb.askyesno(title, str(message))
@@ -258,6 +264,9 @@ def _确认框(message, title="致爱"):
 
 def _输入框(prompt, title="致爱"):
     """显示一个输入对话框，返回字符串"""
+    if _os.environ.get("ZHIAI_HEADLESS") == "1":
+        print(f"[输入框] {title}: {prompt} -> 默认: 小致")
+        return "小致"
     root = _tk.Tk()
     root.withdraw()
     res = _sd.askstring(title, prompt)
