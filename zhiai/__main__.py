@@ -107,10 +107,8 @@ def repl():
     """交互式解释器"""
     enable_ansi_escapes()
     print(colorize_diagonal_gradient(LOGO.strip("\n")))
-    print("╔══════════════════════════════════════╗")
-    print("║    致爱 v1.0.11 — 中文编程语言       ║")
-    print("║    输入 '退出' 或 Ctrl+C 结束        ║")
-    print("╚══════════════════════════════════════╝")
+    print("致爱 v1.0.11 — 中文编程语言")
+    print("输入 '退出' 或 Ctrl+C 结束")
     print()
 
     interpreter = Interpreter()
