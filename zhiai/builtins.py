@@ -218,19 +218,67 @@ def _并行映射(func, arr):
         results = list(executor.map(wrapped, arr))
     return results
 
+
+# ── 结构化并发原语 (Structured Concurrency) ──
+
+class CancellationToken:
+    """取消令牌，用于协作式取消任务"""
+    def __init__(self):
+        self._is_cancelled = False
+        
+    def 取消(self):
+        self._is_cancelled = True
+        
+    def 已取消(self):
+        return self._is_cancelled
+
+def _创建取消令牌():
+    return CancellationToken()
+
+
+class TaskGroup:
+    """任务组，管理一组异步任务"""
+    def __init__(self):
+        self._tasks = []
+        
+    def 提交(self, func, *args):
+        task = _异步(func, *args)
+        self._tasks.append(task)
+        return task
+        
+    def 等待全部(self):
+        results = []
+        for task in self._tasks:
+            results.append(task.获取())
+        return results
+
+def _创建任务组():
+    return TaskGroup()
+
+
 import queue as _queue
+import time as _time
 
 class Channel:
     """线程安全的通道，用于协程/Actor间通信"""
     def __init__(self, capacity=0):
         self._q = _queue.Queue(maxsize=capacity)
         
-    def 发送(self, item):
-        self._q.put(item)
-        return True
+    def 发送(self, item, timeout=None):
+        try:
+            self._q.put(item, timeout=timeout)
+            return True
+        except _queue.Full:
+            return False
         
-    def 接收(self):
-        return self._q.get()
+    def 接收(self, timeout=None):
+        try:
+            return self._q.get(timeout=timeout)
+        except _queue.Empty:
+            return None
+            
+    def 尝试接收(self):
+        return self.接收(timeout=0)
         
     def __repr__(self):
         return f"<通道 (大小={self._q.qsize()})>"
@@ -238,6 +286,18 @@ class Channel:
 def _创建通道(capacity=0):
     """创建一个通信通道"""
     return Channel(int(capacity))
+
+def _通道选择(receivers, timeout=None):
+    """模拟 Go 的 select，轮询多个通道的接收。receivers 是通道列表"""
+    start_time = _time.time()
+    while True:
+        for i, ch in enumerate(receivers):
+            res = ch.尝试接收()
+            if res is not None:
+                return {"索引": i, "数据": res}
+        if timeout is not None and (_time.time() - start_time) >= timeout:
+            return None
+        _time.sleep(0.01) # 避免 CPU 空转
 
 
 # ── 内置函数 ──────────────────────────────────────────────────────────

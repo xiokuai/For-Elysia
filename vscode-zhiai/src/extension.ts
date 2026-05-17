@@ -36,10 +36,10 @@ export function activate(context: vscode.ExtensionContext) {
         '筛选', '映射', '排序', '归约', '查找', '每个', '任意', '全部',
         '反转', '分割', '替换', '修剪', '小写', '大写', '开头是', '结尾是',
         '矩阵相加', '矩阵相乘', '矩阵转置', '正则匹配', '正则替换',
-        '持有', '空值', '成功', '失败', '数据库连接'
-    ];
+        '持有', '空值', '成功', '失败', '断言', '创建通道', '通道选择', '创建任务组', '创建取消令牌'
+        ];
 
-    // ─── 1. 深度语义补全 (Semantic IntelliSense) ────────────────────────
+        // ─── 1. 深度语义补全 (Semantic IntelliSense) ────────────────────────
     const completionProvider = vscode.languages.registerCompletionItemProvider('zhiai', {
         provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
             const completionItems: vscode.CompletionItem[] = [];
