@@ -176,9 +176,10 @@ class CompoundAssign(Node):
 
 class Call(Node):
     """函数调用: 函数名(参数...)"""
-    def __init__(self, callee, args):
+    def __init__(self, callee, args, is_async=False):
         self.callee = callee
         self.args = args
+        self.is_async = is_async
 
 
 class IndexAccess(Node):
@@ -219,6 +220,17 @@ class ClassDef(Node):
 
 class DeferStmt(Node):
     """延迟 表达式"""
+    def __init__(self, expr):
+        self.expr = expr
+
+
+class AsyncFuncDef(FuncDef):
+    """异步函数定义"""
+    pass
+
+
+class AwaitExpr(Node):
+    """等待 表达式"""
     def __init__(self, expr):
         self.expr = expr
 

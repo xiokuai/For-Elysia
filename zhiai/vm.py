@@ -1080,6 +1080,28 @@ class VM:
                 raise VMError(f"类型 {type(obj).__name__} 没有方法或属性 '{method_name}'")
 
 
+    def _op_ASYNC_CALL(self, instr):
+        argc = instr[1]
+        args = [self.pop() for _ in range(argc)]
+        args.reverse()
+        callee = self.pop()
+        
+        # 简单实现：使用线程池模拟异步
+        import concurrent.futures
+        from zhiai.builtins import wrap_callable
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        wrapped = wrap_callable(callee)
+        future = executor.submit(wrapped, *args)
+        self.push(future)
+
+    def _op_AWAIT(self, instr):
+        future = self.pop()
+        if hasattr(future, "result"):
+            res = future.result() # 阻塞等待
+            self.push(res)
+        else:
+            self.push(future)
+
     def _op_BREAKPOINT(self, instr):
         print(f"\n[调试] 触发断点 IP: {self.ip}")
         print(f"  栈: {self.stack}")

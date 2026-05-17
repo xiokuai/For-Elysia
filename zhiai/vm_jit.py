@@ -184,9 +184,70 @@ def compile_function(func_obj, global_env):
             code.append("            else:")
             code.append("                setattr(obj, name, val)")
             code.append("            ip += 1")
-        else:
-            # 对于复杂指令，由于有 global_env，可以在 JIT 中生成回退解释逻辑
-            code.append(f"            # 复杂指令 {op_name} 占位")
+        elif op_name == "TRY":
+            handler_ip = instr[1]
+            code.append("            try:")
+            # 这是一个简化的实现，假设 TRY 块直到 END_TRY 结束
+            # 在实际 JIT 中，我们需要更复杂的块分析，这里我们先用占位符
+            code.append(f"                # 开始尝试块，失败将跳转到 {handler_ip}")
+            code.append("                ip += 1")
+        elif op_name == "END_TRY":
+            code.append("            except Exception as e:")
+            code.append("                stack.append(str(e))")
+            # 这里需要跳转到 handler_ip，但 handler_ip 在 TRY 指令中。
+            # 为了简单起见，我们暂不支持跨 IP 的 JIT 异常捕获，JIT 将回退到解释器。
+            code.append("                return None # 触发回退")
+        elif op_name == "RAISE":
+            code.append("            msg = stack.pop()")
+            code.append("            raise Exception(msg)")
+        elif op_name == "MAKE_ARRAY":
+            count = instr[1]
+            code.append(f"            count = {count}")
+            code.append("            arr = [stack.pop() for _ in range(count)]")
+            code.append("            arr.reverse()")
+            code.append("            stack.append(arr)")
+            code.append("            ip += 1")
+        elif op_name == "MAKE_OBJECT":
+            count = instr[1]
+            code.append(f"            count = {count}")
+            code.append("            obj = {}")
+            code.append("            for _ in range(count):")
+            code.append("                v = stack.pop(); k = stack.pop()")
+            code.append("                obj[k] = v")
+            code.append("            stack.append(obj)")
+            code.append("            ip += 1")
+        elif op_name == "PRINT":
+            code.append("            print(stack.pop())")
+            code.append("            ip += 1")
+        elif op_name == "NEW":
+            code.append("            from zhiai.vm import Instance")
+            code.append("            klass = stack.pop()")
+            code.append("            inst = Instance(klass)")
+            code.append("            stack.append(inst)")
+            code.append("            # 构造函数处理在 JIT 中较复杂，通常回退")
+            code.append("            if '构造' in klass['methods']:")
+            code.append("                return None # 触发回退")
+            code.append("            ip += 1")
+        elif op_name == "CALL_METHOD":
+            code.append(f"            name = constants[{instr[1]}]")
+            code.append(f"            argc = {instr[2]}")
+            code.append("            args = [stack.pop() for _ in range(argc)]")
+            code.append("            args.reverse()")
+            code.append("            obj = stack.pop()")
+            code.append("            from zhiai.builtins import wrap_callable")
+            code.append("            # 简化版方法调用")
+            code.append("            if hasattr(obj, 'fields'):")
+            code.append("                offset = obj.shape.get_offset(name)")
+            code.append("                if offset is not None:")
+            code.append("                    m = obj.fields[offset]")
+            code.append("                    stack.append(wrap_callable(m)(*args))")
+            code.append("                elif name in obj.klass['methods']:")
+            code.append("                    m = obj.klass['methods'][name]")
+            code.append("                    stack.append(wrap_callable(m)(obj, *args))")
+            code.append("                else: stack.append(None)")
+            code.append("            else:")
+            code.append("                m = getattr(obj, name, None)")
+            code.append("                stack.append(m(*args) if callable(m) else m)")
             code.append("            ip += 1")
             
     code.append("    return None")

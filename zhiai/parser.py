@@ -289,11 +289,26 @@ class Parser:
             left = ast.BinaryOp(left, "**", right)
         return left
 
+    def parse_async_func_def(self):
+        name = self.expect(TT.IDENTIFIER, "期望函数名").value
+        self.expect(TT.LPAREN, "期望 '('")
+        params = self.parse_params()
+        self.expect(TT.RPAREN, "期望 ')'")
+        body = []
+        while not self.check(TT.END) and not self.is_at_end():
+            body.append(self.parse_stmt())
+        self.expect(TT.END, "期望 '结束'")
+        return ast.AsyncFuncDef(name, params, body)
+
     def parse_unary(self):
         if self.check(TT.MINUS):
             self.advance()
             operand = self.parse_unary()
             return ast.UnaryOp("-", operand)
+        if self.check(TT.AWAIT):
+            self.advance()
+            operand = self.parse_unary()
+            return ast.AwaitExpr(operand)
         return self.parse_call_or_access()
 
     def parse_arrow_func_from_ident(self, ident_tok):
@@ -304,6 +319,11 @@ class Parser:
 
     def parse_call_or_access(self):
         """解析函数调用、属性访问、索引访问"""
+        is_async_call = False
+        if self.check(TT.ASYNC):
+            self.advance()
+            is_async_call = True
+            
         expr = self.parse_primary()
 
         while True:
@@ -317,7 +337,8 @@ class Parser:
                         self.advance()
                         args.append(self.parse_expr())
                 self.expect(TT.RPAREN, "期望 ')'")
-                expr = ast.Call(expr, args)
+                expr = ast.Call(expr, args, is_async=is_async_call)
+                is_async_call = False # 只有第一层受影响
             elif self.check(TT.DOT):
                 # 属性/方法访问
                 self.advance()
@@ -424,7 +445,7 @@ class Parser:
 
         self.error()
 
-    def parse_anonymous_func(self):
+    def parse_anonymous_func(self, is_async=False):
         self.expect(TT.FUNC)
         self.expect(TT.LPAREN)
         params = self.parse_params()

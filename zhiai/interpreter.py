@@ -58,6 +58,26 @@ class Environment:
         return False
 
 
+class Instance:
+    """致爱类实例"""
+    def __init__(self, klass):
+        self.klass = klass
+        self.fields = {}
+
+    def get_prop(self, name):
+        if name in self.fields:
+            return self.fields[name]
+        if name in self.klass.methods:
+            return self.klass.methods[name]
+        return None
+
+    def set_prop(self, name, value):
+        self.fields[name] = value
+
+    def __repr__(self):
+        return f"<实例 {self.klass.name}>"
+
+
 class Function:
     """用户定义的函数"""
 
@@ -83,6 +103,8 @@ class Function:
         func_env = Environment(self.closure)
         for param, arg in zip(self.params, args):
             func_env.define(param, arg)
+        
+        # 准备延迟执行栈
         self.interpreter.defer_stacks.append([])
         try:
             self.interpreter.exec_stmts(self.body, func_env)
@@ -90,9 +112,44 @@ class Function:
         except ReturnSignal as ret:
             return ret.value
         finally:
+            # 执行延迟任务
             defers = self.interpreter.defer_stacks.pop() if self.interpreter.defer_stacks else []
             for expr, env in reversed(defers):
                 self.interpreter.eval(expr, env)
+
+
+class Class:
+    """致爱类定义"""
+    def __init__(self, name, methods, interpreter):
+        self.name = name
+        self.methods = methods # 这里的 methods 是 Function 对象映射
+        self.interpreter = interpreter
+
+    def __call__(self, *args):
+        # 实例化类
+        instance = Instance(self)
+        # 检查是否有构造函数
+        if "构造" in self.methods:
+            ctor = self.methods["构造"]
+            # 绑定 '这' (this) 到实例
+            func_env = Environment(ctor.closure)
+            func_env.define("这", instance)
+            for param, arg in zip(ctor.params, args):
+                func_env.define(param, arg)
+            
+            self.interpreter.defer_stacks.append([])
+            try:
+                self.interpreter.exec_stmts(ctor.body, func_env)
+            except ReturnSignal:
+                pass
+            finally:
+                defers = self.interpreter.defer_stacks.pop() if self.interpreter.defer_stacks else []
+                for expr, env in reversed(defers):
+                    self.interpreter.eval(expr, env)
+        return instance
+
+    def __repr__(self):
+        return f"<类 {self.name}>"
 
 
 class Interpreter:
@@ -105,7 +162,7 @@ class Interpreter:
             self.global_env.define(name, func)
             
         self.global_env.define("导入", self._builtin_import)
-        self.defer_stacks = []
+        self.defer_stacks = [[]] # 顶级延迟栈
 
     def _builtin_import(self, module_path):
         import os
@@ -116,7 +173,7 @@ class Interpreter:
             if os.path.exists(module_path + ".za"):
                 module_path += ".za"
             elif os.path.exists(module_path + ".zab"):
-                # 如果只有 .zab，就退化为启动一个 VM 来跑
+                # 如果只有 .zab，退化为启动 VM
                 try:
                     from zhiai._fastvm import VM
                 except ImportError:
@@ -161,18 +218,21 @@ class Interpreter:
 
     def run(self, program):
         """执行程序"""
-        self.defer_stacks.append([])
         try:
             self.exec_stmts(program.statements, self.global_env)
         finally:
-            defers = self.defer_stacks.pop() if self.defer_stacks else []
-            for expr, env in reversed(defers):
-                self.eval(expr, env)
+            if self.defer_stacks:
+                defers = self.defer_stacks.pop()
+                for expr, env in reversed(defers):
+                    self.eval(expr, env)
 
     def exec_stmts(self, stmts, env):
         """执行语句列表"""
         for stmt in stmts:
-            self.exec_stmt(stmt, env)
+            res = self.exec_stmt(stmt, env)
+            if res is not None:
+                return res
+        return None
 
     def exec_stmt(self, stmt, env):
         """执行单条语句"""
@@ -190,21 +250,23 @@ class Interpreter:
         elif isinstance(stmt, ast.IfStmt):
             condition = self.eval(stmt.condition, env)
             if self.is_truthy(condition):
-                self.exec_stmts(stmt.body, env)
+                return self.exec_stmts(stmt.body, env)
             else:
                 executed = False
                 for elif_cond, elif_body in stmt.elifs:
                     if self.is_truthy(self.eval(elif_cond, env)):
-                        self.exec_stmts(elif_body, env)
+                        res = self.exec_stmts(elif_body, env)
+                        if res is not None: return res
                         executed = True
                         break
                 if not executed and stmt.else_body:
-                    self.exec_stmts(stmt.else_body, env)
+                    return self.exec_stmts(stmt.else_body, env)
 
         elif isinstance(stmt, ast.WhileStmt):
             while self.is_truthy(self.eval(stmt.condition, env)):
                 try:
-                    self.exec_stmts(stmt.body, env)
+                    res = self.exec_stmts(stmt.body, env)
+                    if res is not None: return res
                 except BreakSignal:
                     break
                 except ContinueSignal:
@@ -219,7 +281,8 @@ class Interpreter:
                 while i <= end:
                     env.define(stmt.var_name, i)
                     try:
-                        self.exec_stmts(stmt.body, env)
+                        res = self.exec_stmts(stmt.body, env)
+                        if res is not None: return res
                     except BreakSignal:
                         break
                     except ContinueSignal:
@@ -229,7 +292,8 @@ class Interpreter:
                 while i >= end:
                     env.define(stmt.var_name, i)
                     try:
-                        self.exec_stmts(stmt.body, env)
+                        res = self.exec_stmts(stmt.body, env)
+                        if res is not None: return res
                     except BreakSignal:
                         break
                     except ContinueSignal:
@@ -247,7 +311,8 @@ class Interpreter:
             for item in items:
                 env.define(stmt.var_name, item)
                 try:
-                    self.exec_stmts(stmt.body, env)
+                    res = self.exec_stmts(stmt.body, env)
+                    if res is not None: return res
                 except BreakSignal:
                     break
                 except ContinueSignal:
@@ -269,24 +334,30 @@ class Interpreter:
 
         elif isinstance(stmt, ast.TryCatch):
             try:
-                self.exec_stmts(stmt.try_body, env)
+                return self.exec_stmts(stmt.try_body, env)
             except (ReturnSignal, BreakSignal, ContinueSignal):
                 raise
             except Exception as e:
-                # ZhiAiError 和其他异常都被捕获
-                # RuntimeError 也被捕获（包括 错误() 抛出的）
                 catch_env = Environment(env)
                 catch_env.define(stmt.catch_var, str(e))
-                self.exec_stmts(stmt.catch_body, catch_env)
-
-        elif isinstance(stmt, ast.Program):
-            self.exec_stmts(stmt.statements, env)
+                return self.exec_stmts(stmt.catch_body, catch_env)
 
         elif isinstance(stmt, ast.DeferStmt):
             self.defer_stacks[-1].append((stmt.expr, env))
 
+        elif isinstance(stmt, ast.ClassDef):
+            methods = {}
+            klass = Class(stmt.name, methods, self)
+            env.define(stmt.name, klass)
+            for m in stmt.methods:
+                methods[m.name] = Function(m.name, m.params, m.body, env, self)
+
+        elif isinstance(stmt, ast.Program):
+            return self.exec_stmts(stmt.statements, env)
+
         else:
             raise RuntimeError(f"未知的语句类型: {type(stmt).__name__}")
+        return None
 
     def eval(self, node, env):
         """求值表达式"""
@@ -361,6 +432,12 @@ class Interpreter:
         if isinstance(node, ast.AnonymousFunc):
             return Function(None, node.params, node.body, env, self)
 
+        elif isinstance(node, ast.AwaitExpr):
+            val = self.eval(node.expr, env)
+            if hasattr(val, "result"):
+                return val.result()
+            return val
+
         raise RuntimeError(f"未知的表达式类型: {type(node).__name__}")
 
     def eval_binary(self, node, env):
@@ -382,7 +459,6 @@ class Interpreter:
 
         # 算术
         if op == "+":
-            # 字符串拼接
             if isinstance(left, str) or isinstance(right, str):
                 return self.to_str(left) + self.to_str(right)
             return left + right
@@ -393,7 +469,6 @@ class Interpreter:
         if op == "/":
             if right == 0:
                 raise RuntimeError("除以零")
-            # 整除还是浮点除
             if isinstance(left, int) and isinstance(right, int) and left % right == 0:
                 return left // right
             return left / right
@@ -437,8 +512,12 @@ class Interpreter:
                 raise RuntimeError(f"无法索引赋值: {type(obj).__name__}")
         elif isinstance(node.target, ast.PropertyAccess):
             obj = self.eval(node.target.obj, env)
-            if isinstance(obj, dict):
+            if isinstance(obj, Instance):
+                obj.set_prop(node.target.prop, value)
+            elif isinstance(obj, dict):
                 obj[node.target.prop] = value
+            elif hasattr(obj, node.target.prop):
+                setattr(obj, node.target.prop, value)
             else:
                 raise RuntimeError(f"无法属性赋值: {type(obj).__name__}")
         else:
@@ -447,7 +526,7 @@ class Interpreter:
         return value
 
     def eval_compound_assign(self, node, env):
-        """求值复合赋值（目标只求值一次）"""
+        """求值复合赋值"""
         inc = self.eval(node.value, env)
         op = node.op
 
@@ -474,6 +553,11 @@ class Interpreter:
 
         if isinstance(node.target, ast.PropertyAccess):
             obj = self.eval(node.target.obj, env)
+            if isinstance(obj, Instance):
+                old = obj.get_prop(node.target.prop)
+                new_val = self._apply_op(old, op, inc)
+                obj.set_prop(node.target.prop, new_val)
+                return new_val
             if isinstance(obj, dict):
                 old = obj.get(node.target.prop)
                 new_val = self._apply_op(old, op, inc)
@@ -506,29 +590,20 @@ class Interpreter:
         callee = self.eval(node.callee, env)
         args = [self.eval(a, env) for a in node.args]
 
-        if isinstance(callee, Function):
-            if len(args) != len(callee.params):
-                raise RuntimeError(
-                    f"函数 '{callee.name or '匿名'}' 期望 {len(callee.params)} 个参数，"
-                    f"但得到 {len(args)} 个"
-                )
-            # 创建新作用域，绑定闭包
-            func_env = Environment(callee.closure)
-            for param, arg in zip(callee.params, args):
-                func_env.define(param, arg)
-            self.defer_stacks.append([])
-            try:
-                self.exec_stmts(callee.body, func_env)
-                return None
-            except ReturnSignal as ret:
-                return ret.value
-            finally:
-                defers = self.defer_stacks.pop() if self.defer_stacks else []
-                for expr, env in reversed(defers):
-                    self.eval(expr, env)
+        if node.is_async:
+            import concurrent.futures
+            from .builtins import wrap_callable
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            wrapped = wrap_callable(callee)
+            return executor.submit(wrapped, *args)
+
+        if isinstance(callee, (Function, Class)):
+            return callee(*args)
 
         if callable(callee):
             try:
+                from .builtins import wrap_callable
+                args = [wrap_callable(a) for a in args]
                 return callee(*args)
             except TypeError as e:
                 raise RuntimeError(f"调用错误: {e}")
@@ -568,6 +643,15 @@ class Interpreter:
         obj = self.eval(node.obj, env)
         prop = node.prop
 
+        if isinstance(obj, Instance):
+            val = obj.get_prop(prop)
+            if isinstance(val, Function):
+                # 自动绑定 '这'
+                bound_env = Environment(val.closure)
+                bound_env.define("这", obj)
+                return Function(val.name, val.params, val.body, bound_env, self)
+            return val
+
         if isinstance(obj, list) and prop == "长度":
             return len(obj)
         if isinstance(obj, str) and prop == "长度":
@@ -575,22 +659,15 @@ class Interpreter:
         if isinstance(obj, dict):
             if prop in obj:
                 return obj[prop]
-            # 检查是否有这个方法
-            if prop in ARRAY_METHODS:
-                raise RuntimeError(f"对象没有方法 '{prop}'")
-            return None  # 对象属性不存在时返回空
+            return None
 
-        # 检查数组/字符串方法
         if isinstance(obj, list) and prop in ARRAY_METHODS:
             return lambda *args: ARRAY_METHODS[prop](obj, *args)
         if isinstance(obj, str) and prop in STRING_METHODS:
             return lambda *args: STRING_METHODS[prop](obj, *args)
 
-        # 允许访问原生 Python 对象的属性/方法
         if hasattr(obj, prop):
             val = getattr(obj, prop)
-            if callable(val):
-                return val
             return val
 
         raise RuntimeError(f"类型 {type(obj).__name__} 没有属性 '{prop}'")
@@ -601,7 +678,16 @@ class Interpreter:
         method = node.method
         args = [self.eval(a, env) for a in node.args]
 
-        # 数组方法
+        if isinstance(obj, Instance):
+            func = obj.get_prop(method)
+            if isinstance(func, Function):
+                # 手动绑定并调用
+                bound_env = Environment(func.closure)
+                bound_env.define("这", obj)
+                bound_func = Function(func.name, func.params, func.body, bound_env, self)
+                return bound_func(*args)
+            raise RuntimeError(f"实例没有方法 '{method}'")
+
         if isinstance(obj, list):
             if method in ARRAY_METHODS:
                 return ARRAY_METHODS[method](obj, *args)
@@ -609,7 +695,6 @@ class Interpreter:
                 return len(obj)
             raise RuntimeError(f"数组没有方法 '{method}'")
 
-        # 字符串方法
         if isinstance(obj, str):
             if method in STRING_METHODS:
                 return STRING_METHODS[method](obj, *args)
@@ -617,7 +702,6 @@ class Interpreter:
                 return len(obj)
             raise RuntimeError(f"字符串没有方法 '{method}'")
 
-        # 对象方法
         if isinstance(obj, dict):
             if method in obj:
                 func = obj[method]
@@ -625,7 +709,6 @@ class Interpreter:
                     return func(*args)
             raise RuntimeError(f"对象没有方法 '{method}'")
 
-        # 允许调用原生 Python 对象的方法
         if hasattr(obj, method):
             func = getattr(obj, method)
             if callable(func):

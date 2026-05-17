@@ -39,6 +39,8 @@ class TT(Enum):
     CATCH = auto()        # 捕获
     END = auto()          # 结束
     DEFER = auto()        # 延迟
+    ASYNC = auto()        # 异步
+    AWAIT = auto()        # 等待
 
 
     # 运算符

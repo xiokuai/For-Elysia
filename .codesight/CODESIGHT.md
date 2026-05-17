@@ -1,15 +1,16 @@
 # 致爱 — AI Context Map
 
-> **Stack:** raw-http | none | unknown | javascript
+> **Stack:** raw-http | none | unknown | typescript
 
-> 0 routes | 0 models | 0 components | 8 lib files | 0 env vars | 0 middleware
-> **Token savings:** this file is ~600 tokens. Without it, AI exploration would cost ~3,800 tokens. **Saves ~3,200 tokens per conversation.**
-> **Last scanned:** 2026-05-16 03:26 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 15 lib files | 1 env vars | 0 middleware | 10 events
+> **Token savings:** this file is ~900 tokens. Without it, AI exploration would cost ~8,900 tokens. **Saves ~8,000 tokens per conversation.**
+> **Last scanned:** 2026-05-17 07:14 — re-run after significant changes
 
 ---
 
 # Libraries
 
+- `vscode-zhiai\src\extension.ts` — function activate: (context) => void, function deactivate: () => void
 - `zhiai\ast_nodes.py`
   - class Node
   - class Program
@@ -17,22 +18,25 @@
   - class ConstDecl
   - class ExprStmt
   - class IfStmt
-  - _...23 more_
+  - _...26 more_
 - `zhiai\builtins.py`
+  - function wrap_callable: (func)
   - function array_add: (arr, item)
   - function array_remove: (arr, index)
   - function array_contains: (arr, item)
   - function array_sort: (arr)
   - function array_reverse: (arr)
-  - function array_join: (arr, func)
-  - _...15 more_
+  - _...26 more_
+- `zhiai\gc.py` — class MarkSweepGC
 - `zhiai\interpreter.py`
   - class ReturnSignal
   - class BreakSignal
   - class ContinueSignal
   - class Environment
+  - class Instance
   - class Function
-  - class Interpreter
+  - _...2 more_
+- `zhiai\jit.py` — function exec_jit: (ast_program), class JITCompiler
 - `zhiai\lexer.py`
   - function tokenize: (source, filename)
   - class TT
@@ -43,27 +47,42 @@
   - function parse: (tokens)
   - class ParseError
   - class Parser
+- `zhiai\shapes.py` — class Shape
 - `zhiai\vm.py`
   - function run_file: (path)
   - function main: ()
   - class VMError
+  - class Environment
   - class Frame
-  - class VM
+  - class FramePool
+  - _...2 more_
+- `zhiai\vm_jit.py` — function compile_function: (func_obj, global_env)
 - `zhiai\__main__.py`
   - function run_source: (source, filename, interpreter)
   - function run_file: (filepath)
+  - function enable_ansi_escapes: ()
   - function repl: ()
   - function needs_more_lines: (source)
   - function read_multiline: (first_line)
-  - function main: ()
+  - _...1 more_
 - `zhiai_cli.py`
   - function get_base_path: ()
   - function setup_zhiai_path: ()
   - function get_compiler_path: ()
   - function cmd_repl: ()
-  - function cmd_run_za: (filepath)
-  - function cmd_run_zab: (filepath)
+  - function cmd_run_za: (filepath, jit)
+  - function cmd_run_zab: (filepath, fast)
   - _...8 more_
+- `zhiai_fmt.py` — function format_code: (code), function main: ()
+- `zhiai_zap.py` — function usage: (), function main: ()
+
+---
+
+# Config
+
+## Environment Variables
+
+- `ZHIAI_HEADLESS` **required** — zhiai\builtins.py
 
 ---
 
@@ -82,6 +101,21 @@
 - `/builtins.py` ← `zhiai\interpreter.py`
 - `/parser.py` ← `zhiai\__main__.py`
 - `/interpreter.py` ← `zhiai\__main__.py`
+
+---
+
+# Events & Queues
+
+- `zhiai` [event] — `vscode-zhiai/src/extension.ts`
+- `将拼写错误「${badWord}」修复为「${corrected}」` [event] — `vscode-zhiai/src/extension.ts`
+- `# 致爱 JIT 自动生成的 Python 代码` [event] — `zhiai/jit.py`
+- `import sys` [event] — `zhiai/jit.py`
+- `pass` [event] — `zhiai/jit.py`
+- `else:` [event] — `zhiai/jit.py`
+- `这 = self` [event] — `zhiai/jit.py`
+- `break` [event] — `zhiai/jit.py`
+- `continue` [event] — `zhiai/jit.py`
+- `try:` [event] — `zhiai/jit.py`
 
 ---
 

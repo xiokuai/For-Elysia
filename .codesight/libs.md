@@ -1,5 +1,6 @@
 # Libraries
 
+- `vscode-zhiai\src\extension.ts` — function activate: (context) => void, function deactivate: () => void
 - `zhiai\ast_nodes.py`
   - class Node
   - class Program
@@ -7,22 +8,25 @@
   - class ConstDecl
   - class ExprStmt
   - class IfStmt
-  - _...23 more_
+  - _...26 more_
 - `zhiai\builtins.py`
+  - function wrap_callable: (func)
   - function array_add: (arr, item)
   - function array_remove: (arr, index)
   - function array_contains: (arr, item)
   - function array_sort: (arr)
   - function array_reverse: (arr)
-  - function array_join: (arr, func)
-  - _...15 more_
+  - _...26 more_
+- `zhiai\gc.py` — class MarkSweepGC
 - `zhiai\interpreter.py`
   - class ReturnSignal
   - class BreakSignal
   - class ContinueSignal
   - class Environment
+  - class Instance
   - class Function
-  - class Interpreter
+  - _...2 more_
+- `zhiai\jit.py` — function exec_jit: (ast_program), class JITCompiler
 - `zhiai\lexer.py`
   - function tokenize: (source, filename)
   - class TT
@@ -33,24 +37,31 @@
   - function parse: (tokens)
   - class ParseError
   - class Parser
+- `zhiai\shapes.py` — class Shape
 - `zhiai\vm.py`
   - function run_file: (path)
   - function main: ()
   - class VMError
+  - class Environment
   - class Frame
-  - class VM
+  - class FramePool
+  - _...2 more_
+- `zhiai\vm_jit.py` — function compile_function: (func_obj, global_env)
 - `zhiai\__main__.py`
   - function run_source: (source, filename, interpreter)
   - function run_file: (filepath)
+  - function enable_ansi_escapes: ()
   - function repl: ()
   - function needs_more_lines: (source)
   - function read_multiline: (first_line)
-  - function main: ()
+  - _...1 more_
 - `zhiai_cli.py`
   - function get_base_path: ()
   - function setup_zhiai_path: ()
   - function get_compiler_path: ()
   - function cmd_repl: ()
-  - function cmd_run_za: (filepath)
-  - function cmd_run_zab: (filepath)
+  - function cmd_run_za: (filepath, jit)
+  - function cmd_run_zab: (filepath, fast)
   - _...8 more_
+- `zhiai_fmt.py` — function format_code: (code), function main: ()
+- `zhiai_zap.py` — function usage: (), function main: ()
