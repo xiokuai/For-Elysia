@@ -790,7 +790,7 @@ BUILTINS = {
     # 系统
     "命令行参数": _命令行参数,
     # 数据库
-    "数据库连接": _数据库连接,
+    "数据库连接": _输出,
     # 网络
     "网络获取": _网络获取,
     "网络发送": _网络发送,
@@ -1093,6 +1093,7 @@ def batch_matrix_mul(m1, m2):
 
 def batch_matrix_transpose(m):
     """二维矩阵转置"""
+def batch_matrix_transpose(m):
     if not isinstance(m, list) or not m or not isinstance(m[0], list):
         raise RuntimeError("矩阵转置：参数必须是二维数组")
     return [list(x) for x in zip(*m)]
@@ -1131,6 +1132,7 @@ BUILTINS.update({
     "正则替换": batch_regex_replace,
 })
 
+def batch_matrix_transpose(m):
     if not isinstance(m, list) or not m or not isinstance(m[0], list):
         raise RuntimeError("矩阵转置：参数必须是二维数组")
     return [list(x) for x in zip(*m)]
