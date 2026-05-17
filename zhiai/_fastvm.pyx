@@ -97,7 +97,7 @@ class VM:
         self.instructions = []
         self.constants = []
         self.halted = False
-        self.gc = MarkSweepGC(self)
+        self.gc = IncrementalGC(self)
         self.deferred = []
 
         # 注册内置
@@ -229,7 +229,9 @@ class VM:
                     if idx < 0: idx += len(obj)
                     if idx < 0 or idx >= len(obj): raise VMError(f"索引赋值越界: {idx}")
                     obj[idx] = val
+                    self.gc.write_barrier(val)
                 elif isinstance(obj, dict): obj[idx_val] = val
+                    self.gc.write_barrier(val)
                 stack.append(val)
             elif op == 26: # CALL
                 argc = <int>instr[1]

@@ -51,7 +51,7 @@ def compile_function(func_obj, global_env):
     code.append("    n_instr = len(instructions)")
     code.append("    while ip < n_instr:")
     
-    r_info = {} # 局部常量跟踪
+    r_info = {} # 局部常量与类型跟踪
     
     for i, instr in enumerate(instructions):
         d = depths[i]
@@ -63,7 +63,6 @@ def compile_function(func_obj, global_env):
         if cfg and i in cfg.blocks:
             r_info.clear()
             block = cfg.blocks[i]
-            # 循环展开检查 (v1.0.11+ 特性)
             if optimizer.should_unroll(block):
                 code.append(f"        # [优化] 自动循环展开标记: 块 {i}")
             
@@ -75,7 +74,6 @@ def compile_function(func_obj, global_env):
         op_int = instr[0]
         op_name = OPCODE_LIST[op_int]
         
-        # ─── 高效 3AC 生成逻辑 (含常量折叠) ───
         if op_name == "PUSH":
             val = constants[instr[1]]
             r_info[d] = val
@@ -132,8 +130,76 @@ def compile_function(func_obj, global_env):
             code.append("                from zhiai.builtins import wrap_callable")
             code.append(f"                r[{d - argc - 1}] = wrap_callable(callee)(*f_args)")
             code.append("            ip += 1")
+        elif op_name == "MAKE_ARRAY":
+            argc = instr[1]
+            code.append(f"            r[{d - argc + 1}] = r[{d - argc}:{d}]")
+            code.append(f"            r[{d - argc + 1}].reverse()")
+            r_info[d - argc + 1] = {"type": "list"}
+            code.append("            ip += 1")
+        elif op_name == "MAKE_OBJECT":
+            argc = instr[1]
+            code.append(f"            r[{d - argc * 2 + 1}] = {{r[i]: r[i+1] for i in range({d - argc * 2}, {d}, 2)}}")
+            r_info[d - argc * 2 + 1] = {"type": "dict"}
+            code.append("            ip += 1")
+        elif op_name == "LOAD_PROP":
+            r_info.pop(d-1, None)
+            code.append(f"            obj = r[{d-1}]")
+            code.append(f"            name = constants[{instr[1]}]")
+            code.append("            if hasattr(obj, 'get_prop'):")
+            code.append(f"                r[{d-1}] = obj.get_prop(name)")
+            code.append("            elif isinstance(obj, dict):")
+            code.append(f"                r[{d-1}] = obj.get(name)")
+            code.append("            else:")
+            code.append(f"                r[{d-1}] = getattr(obj, name, None)")
+            code.append("            ip += 1")
+        elif op_name == "CALL_METHOD":
+            argc = instr[2]
+            obj_reg = d - argc - 1
+            method_name = constants[instr[1]]
+            
+            code.append(f"            callee = r[{obj_reg}]")
+            code.append(f"            f_args = r[{d - argc}:{d}]")
+            
+            # 去虚拟化 (Devirtualization)
+            known_type = r_info.get(obj_reg)
+            if known_type and isinstance(known_type, dict) and "type" in known_type:
+                t = known_type["type"]
+                code.append(f"            # [去虚拟化] 静态推断类型为 {t}")
+                if t == "list":
+                    if method_name == "长度":
+                        code.append(f"            r[{obj_reg}] = len(callee)")
+                    else:
+                        code.append("            from zhiai.builtins import ARRAY_METHODS")
+                        code.append(f"            r[{obj_reg}] = ARRAY_METHODS.get('{method_name}', lambda *x: None)(callee, *f_args)")
+                elif t == "dict":
+                    code.append(f"            r[{obj_reg}] = callee.get('{method_name}')(*f_args)")
+            else:
+                code.append("            if hasattr(callee, 'get_prop'):")
+                code.append(f"                m = callee.get_prop('{method_name}')")
+                code.append("                if callable(m):")
+                code.append(f"                    r[{obj_reg}] = m(*f_args)")
+                code.append("                else:")
+                code.append(f"                    r[{obj_reg}] = m")
+                code.append("            elif isinstance(callee, list):")
+                if method_name == "长度":
+                    code.append(f"                r[{obj_reg}] = len(callee)")
+                else:
+                    code.append("                from zhiai.builtins import ARRAY_METHODS")
+                    code.append(f"                r[{obj_reg}] = ARRAY_METHODS.get('{method_name}', lambda *x: None)(callee, *f_args)")
+                code.append("            elif isinstance(callee, str):")
+                if method_name == "长度":
+                    code.append(f"                r[{obj_reg}] = len(callee)")
+                else:
+                    code.append("                from zhiai.builtins import STRING_METHODS")
+                    code.append(f"                r[{obj_reg}] = STRING_METHODS.get('{method_name}', lambda *x: None)(callee, *f_args)")
+                code.append("            elif isinstance(callee, dict):")
+                code.append(f"                r[{obj_reg}] = callee.get('{method_name}')(*f_args)")
+                code.append("            else:")
+                code.append(f"                r[{obj_reg}] = getattr(callee, '{method_name}', lambda *x: None)(*f_args)")
+            
+            code.append("            ip += 1")
+            r_info.clear() # 方法调用可能产生副作用，清空追踪
         else:
-            # 安全回退
             return None
             
     code.append("    return None")

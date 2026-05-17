@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zhiai.builtins import BUILTINS, ARRAY_METHODS, STRING_METHODS, BATCH_FUNC_MAP, ZhiAiError
 from zhiai.shapes import EMPTY_SHAPE
-from zhiai.gc import MarkSweepGC
+from zhiai.gc import IncrementalGC
 
 
 class VMError(Exception):
@@ -176,7 +176,7 @@ class VM:
         self.exception_handlers = []
         self.frame_pool = FramePool()
         self.deferred = []
-        self.gc = MarkSweepGC(self)
+        self.gc = IncrementalGC(self)
         # 指令分发表，映射 opcode 到实现方法
         self._dispatch = {
             "PUSH": self._op_PUSH,
