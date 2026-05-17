@@ -623,18 +623,14 @@ class VM:
     def _op_LOAD_INDEX(self, instr):
         index = self.pop()
         obj = self.pop()
-        if isinstance(obj, list):
+        if isinstance(obj, (list, str)):
             idx = int(index)
-            if idx < 0:
-                idx += len(obj)
+            if idx < 0: idx += len(obj)
+            if idx < 0 or idx >= len(obj):
+                raise VMError(f"索引越界: {idx}")
             self.push(obj[idx])
         elif isinstance(obj, dict):
             self.push(obj.get(index))
-        elif isinstance(obj, str):
-            idx = int(index)
-            if idx < 0:
-                idx += len(obj)
-            self.push(obj[idx])
         else:
             raise VMError(f"无法索引: {type(obj).__name__}")
 
@@ -643,7 +639,11 @@ class VM:
         obj = self.pop()
         value = self.pop()
         if isinstance(obj, list):
-            obj[int(index)] = value
+            idx = int(index)
+            if idx < 0: idx += len(obj)
+            if idx < 0 or idx >= len(obj):
+                raise VMError(f"索引赋值越界: {idx}")
+            obj[idx] = value
         elif isinstance(obj, dict):
             obj[index] = value
         else:

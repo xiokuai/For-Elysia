@@ -699,14 +699,22 @@ def _索引(arr, item):
 
 
 def _命令行参数():
-    """获取命令行参数（不含解释器和脚本名）"""
-    if len(_sys.argv) >= 2 and _sys.argv[1] in ("compile", "run", "exec"):
-        return _sys.argv[2:]
-    for i, arg in enumerate(_sys.argv):
-        if arg.endswith(".za") or arg.endswith(".zab"):
-            if "main.za" in arg or "compiler" in arg:
-                return _sys.argv[i+1:]
-    return _sys.argv[2:]
+    """获取脚本的命令行参数列表"""
+    # 尝试跳过致爱执行器自身的参数
+    filtered = []
+    skip = True
+    for arg in _sys.argv:
+        if not skip:
+            filtered.append(arg)
+        elif arg.endswith(".za") or arg.endswith(".zab"):
+            skip = False
+    if not filtered and len(_sys.argv) > 1:
+        # 如果是 REPL 或某些特殊模式，可能没找到脚本名，回退到跳过第一个
+        if _sys.argv[1] in ("run", "compile", "exec"):
+             return _sys.argv[3:] if len(_sys.argv) > 2 else []
+        return _sys.argv[1:]
+    return filtered
+
 
 
 # 内置函数表
