@@ -26,7 +26,7 @@ BUILTIN_MODULES = {
 }
 
 def usage():
-    print("致爱包管理器 (ZAP) v1.0.8")
+    print("致爱包管理器 (ZAP) v1.0.10")
     print("用法:")
     print("  zap install <名称> [URL]   安装模块 (如果是官方模块，可省略 URL)")
     print("  zap list                   查看已安装模块")

@@ -3,6 +3,8 @@
 
 import sys
 from zhiai.vm import OPCODE_LIST
+from zhiai.cfg import CFG
+from zhiai.ssa import SSABuilder
 
 def compile_function(func_obj, global_env):
     """动态将致爱字节码函数 JIT 编译为高效的三地址码 (3AC) 形式的原生 Python 代码"""
@@ -50,9 +52,33 @@ def compile_function(func_obj, global_env):
     if not simulate(0, 0):
         return None # 如果模拟失败，回退到解释执行
         
+    # 2. 构建 CFG 与 SSA (静态单赋值) 架构分析
+    cfg = CFG(instructions)
+    cfg.build()
+    
+    # 收集所有的局部变量赋值，找出对应的定义块
+    local_defs = {}
+    if cfg.blocks:
+        for block in cfg.blocks.values():
+            for instr in block.instructions:
+                op_int = instr[0]
+                op_name = OPCODE_LIST[op_int] if op_int < len(OPCODE_LIST) else str(op_int)
+                if op_name == "STORE_LOCAL":
+                    local_idx = instr[1]
+                    var_name = f"local_{local_idx}"
+                    if var_name not in local_defs:
+                        local_defs[var_name] = set()
+                    local_defs[var_name].add(block)
+                    
+        # 运行 SSA 构建器放置 Phi 节点
+        ssa_builder = SSABuilder(cfg)
+        ssa_builder.build()
+        for var_name, def_blocks in local_defs.items():
+            ssa_builder.insert_phi_for_var(var_name, def_blocks)
+
     code = []
     code.append("def jitted_func(locals_, global_env):")
-    code.append("    # 3-Address Code 虚拟寄存器组")
+    code.append("    # 3-Address Code 虚拟寄存器组 & 预分配 SSA 节点")
     code.append("    r = [None] * 256")
     code.append(f"    ip = {func_obj['entry_ip']}")
     code.append("    n_instr = len(instructions)")
@@ -60,6 +86,15 @@ def compile_function(func_obj, global_env):
     
     for i, instr in enumerate(instructions):
         d = depths[i]
+        
+        # Phi Node Comment Output
+        if cfg.blocks and i in cfg.blocks:
+            block = cfg.blocks[i]
+            if block in ssa_builder.phi_nodes:
+                for var_name in ssa_builder.phi_nodes[block]:
+                    pred_labels = [f"B{p.start_ip}" for p in block.predecessors]
+                    code.append(f"        # Phi Node: {var_name} = Φ({', '.join(pred_labels)})")
+
         if d is None:
             # 遇到无法到达的死代码，直接跳过
             code.append(f"        if ip == {i}:")
