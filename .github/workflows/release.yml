@@ -43,6 +43,7 @@ jobs:
       - name: Build VSCode Extension
         run: |
           cd vscode-zhiai
+          Remove-Item *.vsix -ErrorAction SilentlyContinue
           npm install
           npx vsce package
         shell: pwsh
