@@ -88,13 +88,7 @@ stateDiagram-v2
     [*] --> EMPTY_SHAPE: 实例化 (EMPTY_SHAPE)
     EMPTY_SHAPE --> Shape1: 添加 "x"<br>(offset: 0, depth: 1)
     Shape1 --> Shape2: 添加 "y"<br>(offset: 1, depth: 2)
-    
-    note right of Shape2
-        Lazy Offsets 机制：
-        链式指针向上遍历，
-        并将结果缓存在当前 Shape 中，
-        提供常数级的 offset 查找。
-    end
+    note right of Shape2 : Lazy Offsets 机制：链式指针向上遍历并在当前 Shape 中缓存结果以提供常数级 offset 查找。
 ```
 
 ### 2. ⚡ 虚拟机属性读写内联缓存 (Inline Caching, IC)
@@ -232,6 +226,94 @@ stateDiagram-v2
    - 提供 `类...结束`（自动补全构造方法）、`如果...否则...结束`（补全控制分支）及 `导入(...)` 模版，敲击首字即刻展开。
 5. 📂 **代码大块折叠 (Folding Range)**：
    - 极其规整地折叠所有 `类`、`函数`、`如果`、`循环`、`尝试` 至 `结束` 关键字包围的大代码块。
+
+---
+
+## 🛠️ 致爱命令行与工具链参数详解
+
+致爱编程语言提供了一套极具工业质感、功能齐备的完整工具链体系，包含核心编译器/虚拟机运行时（`zhiai` / `zhiai_cli.py`）、中文化包管理器（`zhiai_zap.py`）以及 Token 驱动的高精度格式化器（`zhiai_fmt.py`）。
+
+### 1. 🎛️ 核心运行时与编译器 (`zhiai.exe` / `zhiai_cli.py`)
+
+您可以通过打包好的 `zhiai.exe` 或直接运行 `python zhiai_cli.py` 来调度以下丰富的功能：
+
+* **启动交互式 REPL**
+  ```bash
+  zhiai
+  ```
+  直接运行不加任何参数，进入高度流畅的中文化交互命令行环境。
+
+* **运行致爱源码**
+  ```bash
+  zhiai run <文件.za> [--jit]
+  # 简写形式：
+  zhiai <文件.za> [--jit]
+  ```
+  * `[--jit]`：可选参数，开启极速 JIT 动态编译器执行。
+
+* **编译字节码**
+  ```bash
+  zhiai compile <文件.za> [-o <输出文件名.zab>]
+  ```
+  将 `.za` 源代码编译为高集成度、微秒级瞬间装载的 `.zab` 二进制字节码文件。
+
+* **执行字节码**
+  ```bash
+  zhiai exec <文件.zab> [--fast]
+  ```
+  * `[--fast]`：可选参数，开启高集成度 Cython 二进制 C-Extension 引擎加速运行（需本地有已编译的 `_fastvm.pyd`）。
+
+* **AOT 原生可执行程序编译**
+  ```bash
+  zhiai compile <文件.za> --aot [-o <输出文件名.exe>]
+  ```
+  通过底层转译机制，直接将致爱代码编译为无需依赖任何运行环境的**独立原生 EXE 二进制文件**！
+
+* **执行单行代码**
+  ```bash
+  zhiai -e "输出('你好，致爱！')"
+  ```
+  方便在控制台进行临时测试或在脚本中一键管道调度。
+
+* **文件关联与系统集成**
+  ```bash
+  zhiai install     # 注册 Windows 文件关联，让 .za 和 .zab 自动关联到 zhiai.exe 并可双击执行
+  zhiai uninstall   # 从系统中干净移除致爱文件关联
+  ```
+
+---
+
+### 📦 2. 中文化包管理器 (`zhiai_zap.py`)
+
+ZAP 是致爱专门打造的高颜值中文扩展包管理器。它负责下载、管理非内置的第三方扩展包，并能智能过滤内置的标准库。
+
+* **下载并安装模块**
+  ```bash
+  python zhiai_zap.py install <模块名称>
+  ```
+  * *示例*：`python zhiai_zap.py install gui_zh`。ZAP 会自动检索官方云端镜像，并自动下载到 `zhiai_modules` 目录下。
+  * *内置库拦截*：当尝试安装 `web_ext` 或 `matrix_sci` 等内置标准库时，ZAP 会进行智能感知拦截，温馨提示开发者已包含在核心库内，无须重复安装。
+
+* **查看已下载模块**
+  ```bash
+  python zhiai_zap.py list
+  ```
+
+* **移除第三方包**
+  ```bash
+  python zhiai_zap.py remove <模块名称>
+  ```
+
+---
+
+### 🧼 3. 高精度词法格式化器 (`zhiai_fmt.py`)
+
+提供工业级的 Token 流分析自动对齐与缩进格式化服务：
+
+```bash
+python zhiai_fmt.py <文件.za>
+```
+* **高保真排版**：采用词法解析器的 Token 分析状态机排版，自动忽略所有字符串字面量和注释中的字符干扰，享受极致优雅的代码整理！
 
 ---
 
