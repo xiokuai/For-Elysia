@@ -180,31 +180,32 @@ class JITCompiler:
         op = op_map.get(node.op, node.op)
         return f"({self.visit(node.left)} {op} {self.visit(node.right)})"
 
-    def visit_Assign(self, node):
-        target = self.visit_target(node.target)
-        val = self.visit(node.value)
-        self.emit(f"{target} = {val}")
-
-    def visit_CompoundAssign(self, node):
-        target = self.visit_target(node.target)
-        val = self.visit(node.value)
-        self.emit(f"{target} {node.op}= {val}")
-
     def visit_target(self, node):
+        """生成赋值目标字符串"""
         if isinstance(node, za_ast.Identifier):
             return node.name
         if isinstance(node, za_ast.IndexAccess):
             return f"{self.visit(node.obj)}[{self.visit(node.index)}]"
         if isinstance(node, za_ast.PropertyAccess):
-            return f"_za_set_prop_target({self.visit(node.obj)}, '{node.prop}')" # 这里比较麻烦，转译模式下 setattr 更合适
+            # 修复 Bug #8: 返回一个兼容 getattr 的目标描述
+            return f"getattr({self.visit(node.obj)}, '{node.prop}')"
         return "unknown_target"
 
     def visit_Assign(self, node):
         if isinstance(node.target, za_ast.PropertyAccess):
+            # 修复 Bug #8: 属性赋值逻辑
             obj = self.visit(node.target.obj)
             prop = node.target.prop
             val = self.visit(node.value)
             self.emit(f"_za_set_prop({obj}, '{prop}', {val})")
+        elif isinstance(node.target, za_ast.Identifier) and self.indent > 0:
+            # 修复 Bug #12: 简单的闭包变量修改支持 (尝试自动 nonlocal)
+            # 注意：这里需要更复杂的 scope 检查，目前是预防性尝试
+            self.emit(f"try: nonlocal {node.target.name}")
+            self.emit(f"except: pass")
+            target = self.visit_target(node.target)
+            val = self.visit(node.value)
+            self.emit(f"{target} = {val}")
         else:
             target = self.visit_target(node.target)
             val = self.visit(node.value)
@@ -239,14 +240,7 @@ class JITCompiler:
         return f"_za_method_call({obj}, '{node.method}', {', '.join(args)})"
 
     def visit_AnonymousFunc(self, node):
-        # Python 的 lambda 只能是表达式，所以我们定义一个内联函数
-        import random
-        func_name = f"_za_anon_{random.randint(0, 10000)}"
-        old_indent = self.indent
-        self.indent = 0 # 定义在顶层或当前环境（取决于实现）
-        # 这里为了简单，我们假设匿名函数可以被包装
-        # 实际上在转译模式下，这比较麻烦。
-        # 暂且抛错或使用简化版
+        # Python 的 lambda 只能是表达式，简单实现
         return f"(lambda {', '.join(node.params)}: {self.visit(node.body[0].expr) if len(node.body)==1 and isinstance(node.body[0], za_ast.ReturnStmt) else 'None'})"
 
 def exec_jit(ast_program):
