@@ -55,10 +55,60 @@ def run_file(filepath):
         sys.exit(1)
 
 
+LOGO = r"""
+$$$$$$$$\              $$$$$$$$\ $$\                     $$\           
+\__$$  __|             $$  _____|$$ |                    \__|          
+   $$ | $$$$$$\        $$ |      $$ |$$\   $$\  $$$$$$$\ $$\  $$$$$$\  
+   $$ |$$  __$$\       $$$$$\    $$ |$$ |  $$ |$$  _____|$$ | \____$$\ 
+   $$ |$$ /  $$ |      $$  __|   $$ |$$ |  $$ |\$$$$$$\  $$ | $$$$$$$ |
+   $$ |$$ |  $$ |      $$ |      $$ |$$ |  $$ | \____$$\ $$ |$$  __$$ |
+   $$ |\$$$$$$  |      $$$$$$$$\ $$ |\$$$$$$$ |$$$$$$$  |$$ |\$$$$$$$ |
+   \__| \______/       \________|\__| \____$$ |\_______/ \__| \_______|
+                                     $$\   $$ |                        
+                                     \$$$$$$  |                        
+                                      \______/                         
+"""
+
+def enable_ansi_escapes():
+    import sys
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            h_std_out = kernel32.GetStdHandle(-11)
+            mode = ctypes.c_ulong()
+            if kernel32.GetConsoleMode(h_std_out, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(h_std_out, mode.value | 0x0004)
+        except Exception:
+            pass
+
+def colorize_diagonal_gradient(text, start_rgb=(244, 114, 182), end_rgb=(168, 85, 247)):
+    lines = text.splitlines()
+    max_y = len(lines)
+    max_x = max(len(line) for line in lines) if lines else 1
+    
+    colored_lines = []
+    for y, line in enumerate(lines):
+        colored_line = ""
+        for x, char in enumerate(line):
+            if char.isspace():
+                colored_line += char
+            else:
+                ratio = (x / max_x + y / max_y) / 2.0
+                r = int(start_rgb[0] + (end_rgb[0] - start_rgb[0]) * ratio)
+                g = int(start_rgb[1] + (end_rgb[1] - start_rgb[1]) * ratio)
+                b = int(start_rgb[2] + (end_rgb[2] - start_rgb[2]) * ratio)
+                colored_line += f"\033[38;2;{r};{g};{b}m{char}"
+        colored_line += "\033[0m"
+        colored_lines.append(colored_line)
+    return "\n".join(colored_lines)
+
 def repl():
     """交互式解释器"""
+    enable_ansi_escapes()
+    print(colorize_diagonal_gradient(LOGO.strip("\n")))
     print("╔══════════════════════════════════════╗")
-    print("║    致爱 v1.6.0 — 中文编程语言       ║")
+    print("║    致爱 v1.0.6 — 中文编程语言       ║")
     print("║    输入 '退出' 或 Ctrl+C 结束        ║")
     print("╚══════════════════════════════════════╝")
     print()

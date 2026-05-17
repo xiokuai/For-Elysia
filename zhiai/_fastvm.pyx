@@ -59,6 +59,7 @@ class Frame:
         self.locals = [None] * locals_count
         self.locals_count = locals_count
         self.exception_handlers = []
+        self.deferred = []
         self.is_constructor = is_constructor
         self.instance = instance
 
@@ -83,6 +84,7 @@ class FramePool:
                     frame.locals[i] = None
             frame.locals_count = locals_count
             frame.exception_handlers.clear()
+            frame.deferred = []
             frame.is_constructor = is_constructor
             frame.instance = instance
             return frame
@@ -93,6 +95,7 @@ class FramePool:
         frame.env = None
         frame.constants = None
         frame.instance = None
+        frame.deferred = []
         self.pool.append(frame)
 
 
@@ -132,6 +135,7 @@ class VM:
         self.halted = False
         self.exception_handlers = []
         self.frame_pool = FramePool()
+        self.deferred = []
         
         self._dispatch = {
             "PUSH": self._op_PUSH,
@@ -339,6 +343,12 @@ class VM:
                 except Exception as e:
                     self._handle_exception(e)
         finally:
+            if self.deferred:
+                for cb in reversed(self.deferred):
+                    try:
+                        self.call_function_nested(cb, [])
+                    except Exception as e_defer:
+                        print(f"延迟函数执行出错: {e_defer}", file=sys.stderr)
             builtins.CURRENT_VM = old_vm
 
     def _handle_exception(self, e):
@@ -362,6 +372,13 @@ class VM:
         
         if self.call_stack:
             frame = self.call_stack.pop()
+            # 执行延迟函数
+            if frame.deferred:
+                for cb in reversed(frame.deferred):
+                    try:
+                        self.call_function_nested(cb, [])
+                    except Exception as e_defer:
+                        print(f"延迟函数执行出错: {e_defer}", file=sys.stderr)
             self.frame_pool.release(frame)
             if self.call_stack:
                 last_frame = self.call_stack[-1]
@@ -574,20 +591,38 @@ class VM:
         name = self.constants[instr[1]]
         obj = self.pop()
         if isinstance(obj, Instance):
-            # Inline Cache (IC) check
-            if len(instr) > 3 and obj.shape is instr[2]:
-                self.push(obj.fields[instr[3]])
-                return
-            
+            # Polymorphic Inline Cache (PIC) check
+            if len(instr) > 2:
+                cache_type = instr[2]
+                if cache_type == 'MONO':
+                    if obj.shape is instr[3]:
+                        self.push(obj.fields[instr[4]])
+                        return
+                    else:
+                        # Transition to POLY
+                        mono_shape = instr[3]
+                        mono_offset = instr[4]
+                        instr[2] = 'POLY'
+                        instr[3] = [(mono_shape, mono_offset)]
+                elif cache_type == 'POLY':
+                    cache_list = instr[3]
+                    for cached_shape, offset in cache_list:
+                        if obj.shape is cached_shape:
+                            self.push(obj.fields[offset])
+                            return
+
             # Slow path
             offset = obj.shape.get_offset(name)
             if offset is not None:
                 # Cache the shape and offset
                 if len(instr) == 2:
-                    instr.extend([obj.shape, offset])
-                else:
-                    instr[2] = obj.shape
-                    instr[3] = offset
+                    instr.extend(['MONO', obj.shape, offset])
+                elif instr[2] == 'POLY':
+                    cache_list = instr[3]
+                    if len(cache_list) < 4:
+                        cache_list.append((obj.shape, offset))
+                    else:
+                        instr[2] = 'MEGA'
                 self.push(obj.fields[offset])
             else:
                 if name in obj.klass["methods"]:
@@ -618,21 +653,39 @@ class VM:
         obj = self.pop()
         val = self.pop()
         if isinstance(obj, Instance):
-            # Inline Cache (IC) check
-            if len(instr) > 3 and obj.shape is instr[2]:
-                obj.fields[instr[3]] = val
-                self.push(val)
-                return
-            
+            # Polymorphic Inline Cache (PIC) check
+            if len(instr) > 2:
+                cache_type = instr[2]
+                if cache_type == 'MONO':
+                    if obj.shape is instr[3]:
+                        obj.fields[instr[4]] = val
+                        self.push(val)
+                        return
+                    else:
+                        mono_shape = instr[3]
+                        mono_offset = instr[4]
+                        instr[2] = 'POLY'
+                        instr[3] = [(mono_shape, mono_offset)]
+                elif cache_type == 'POLY':
+                    cache_list = instr[3]
+                    for cached_shape, offset in cache_list:
+                        if obj.shape is cached_shape:
+                            obj.fields[offset] = val
+                            self.push(val)
+                            return
+
             # Slow path
             offset = obj.shape.get_offset(name)
             if offset is not None:
                 # Cache the shape and offset
                 if len(instr) == 2:
-                    instr.extend([obj.shape, offset])
-                else:
-                    instr[2] = obj.shape
-                    instr[3] = offset
+                    instr.extend(['MONO', obj.shape, offset])
+                elif instr[2] == 'POLY':
+                    cache_list = instr[3]
+                    if len(cache_list) < 4:
+                        cache_list.append((obj.shape, offset))
+                    else:
+                        instr[2] = 'MEGA'
                 obj.fields[offset] = val
             else:
                 obj.set_prop(name, val)
@@ -716,6 +769,13 @@ class VM:
                 self.push(ret_val)
             return
         frame = self.call_stack.pop()
+        # 执行延迟函数
+        if frame.deferred:
+            for cb in reversed(frame.deferred):
+                try:
+                    self.call_function_nested(cb, [])
+                except Exception as e_defer:
+                    print(f"延迟函数执行出错: {e_defer}", file=sys.stderr)
         self.instructions = frame.instructions
         self.constants = frame.constants
         self.ip = frame.return_addr

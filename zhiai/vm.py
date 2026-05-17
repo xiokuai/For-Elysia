@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zhiai.builtins import BUILTINS, ARRAY_METHODS, STRING_METHODS, BATCH_FUNC_MAP, ZhiAiError
 from zhiai.shapes import EMPTY_SHAPE
+from zhiai.gc import MarkSweepGC
 
 
 class VMError(Exception):
@@ -96,6 +97,7 @@ class Frame:
         self.locals_count = locals_count
         # 异常处理栈: (handler_ip, stack_size)
         self.exception_handlers = []
+        self.deferred = []
         self.is_constructor = is_constructor
         self.instance = instance
 
@@ -119,6 +121,7 @@ class FramePool:
                 frame.locals = [None] * locals_count
             frame.locals_count = locals_count
             frame.exception_handlers.clear()
+            frame.deferred = []
             frame.is_constructor = is_constructor
             frame.instance = instance
             return frame
@@ -129,6 +132,7 @@ class FramePool:
         frame.env = None
         frame.constants = None
         frame.instance = None
+        frame.deferred = []
         self.pool.append(frame)
 
 
@@ -170,6 +174,8 @@ class VM:
         self.halted = False
         self.exception_handlers = []
         self.frame_pool = FramePool()
+        self.deferred = []
+        self.gc = MarkSweepGC(self)
         # 指令分发表，映射 opcode 到实现方法
         self._dispatch = {
             "PUSH": self._op_PUSH,
@@ -239,6 +245,7 @@ class VM:
 
         # 注册 导入 函数
         self.global_env.define("导入", self._builtin_import)
+        self.global_env.define("垃圾回收", self.gc.collect)
 
     def _builtin_import(self, module_path):
         """导入模块并返回其导出的全局变量字典"""
@@ -394,6 +401,12 @@ class VM:
                 except Exception as e:
                     self._handle_exception(e)
         finally:
+            if self.deferred:
+                for cb in reversed(self.deferred):
+                    try:
+                        self.call_function_nested(cb, [])
+                    except Exception as e_defer:
+                        print(f"延迟函数执行出错: {e_defer}", file=sys.stderr)
             builtins.CURRENT_VM = old_vm
 
     def _handle_exception(self, e):
@@ -421,6 +434,13 @@ class VM:
         # 如果没有局部处理，则向上传播
         if self.call_stack:
             frame = self.call_stack.pop()
+            # 执行延迟函数
+            if frame.deferred:
+                for cb in reversed(frame.deferred):
+                    try:
+                        self.call_function_nested(cb, [])
+                    except Exception as e_defer:
+                        print(f"延迟函数执行出错: {e_defer}", file=sys.stderr)
             self.frame_pool.release(frame)
             if self.call_stack:
                 last_frame = self.call_stack[-1]
@@ -634,20 +654,41 @@ class VM:
         name = self.constants[instr[1]]
         obj = self.pop()
         if isinstance(obj, Instance):
-            # Inline Cache (IC) check
-            if len(instr) > 3 and obj.shape is instr[2]:
-                self.push(obj.fields[instr[3]])
-                return
-            
+            # Polymorphic Inline Cache (PIC) check
+            if len(instr) > 2:
+                cache_type = instr[2]
+                if cache_type == 'MONO':
+                    if obj.shape is instr[3]:
+                        self.push(obj.fields[instr[4]])
+                        return
+                    else:
+                        # Transition to POLY
+                        mono_shape = instr[3]
+                        mono_offset = instr[4]
+                        instr[2] = 'POLY'
+                        instr[3] = [(mono_shape, mono_offset)]
+                        # Fall through to slow path / add new entry
+                elif cache_type == 'POLY':
+                    # Search in cache list
+                    cache_list = instr[3]
+                    for cached_shape, offset in cache_list:
+                        if obj.shape is cached_shape:
+                            self.push(obj.fields[offset])
+                            return
+                    # Fall through to slow path / add new entry
+
             # Slow path
             offset = obj.shape.get_offset(name)
             if offset is not None:
                 # Cache the shape and offset
                 if len(instr) == 2:
-                    instr.extend([obj.shape, offset])
-                else:
-                    instr[2] = obj.shape
-                    instr[3] = offset
+                    instr.extend(['MONO', obj.shape, offset])
+                elif instr[2] == 'POLY':
+                    cache_list = instr[3]
+                    if len(cache_list) < 4:
+                        cache_list.append((obj.shape, offset))
+                    else:
+                        instr[2] = 'MEGA'
                 self.push(obj.fields[offset])
             else:
                 # Check class methods
@@ -743,6 +784,24 @@ class VM:
                     return
 
             if callee["type"] == "function":
+                # JIT 检查与运行时动态编译
+                if "jit_count" not in callee:
+                    callee["jit_count"] = 0
+                    callee["jitted_func"] = None
+                
+                callee["jit_count"] += 1
+                if callee["jit_count"] > 15 and callee["jitted_func"] is None:
+                    from zhiai.vm_jit import compile_function
+                    callee["jitted_func"] = compile_function(callee, self.global_env)
+                    
+                if callee["jitted_func"] is not None:
+                    # 快速路径：直接执行 JIT 编译的原生 Python 代码！
+                    locals_count = callee.get("locals_count", 0)
+                    locals_list = func_args + [None] * (locals_count - len(func_args))
+                    res = callee["jitted_func"](locals_list, self.global_env)
+                    self.push(res)
+                    return
+
                 # 参数检查
                 if len(func_args) != callee.get("arity", 0):
                     raise VMError(f"函数期望 {callee.get('arity',0)} 个参数，但得到 {len(func_args)} 个")
@@ -786,6 +845,13 @@ class VM:
                 self.push(ret_val)
             return
         frame = self.call_stack.pop()
+        # 执行延迟函数
+        if frame.deferred:
+            for cb in reversed(frame.deferred):
+                try:
+                    self.call_function_nested(cb, [])
+                except Exception as e_defer:
+                    print(f"延迟函数执行出错: {e_defer}", file=sys.stderr)
         # 恢复调用者上下文
         self.instructions = frame.instructions
         self.constants = frame.constants
@@ -815,6 +881,7 @@ class VM:
         for _ in range(count):
             arr.append(self.pop())
         arr.reverse()
+        self.gc.track(arr)
         self.push(arr)
 
     def _op_MAKE_OBJECT(self, instr):
@@ -824,6 +891,7 @@ class VM:
             value = self.pop()
             key = self.pop()
             obj[key] = value
+        self.gc.track(obj)
         self.push(obj)
 
     def _op_PRINT(self, instr):
@@ -876,6 +944,7 @@ class VM:
     def _op_NEW(self, instr):
         klass = self.pop()
         instance = Instance(klass)
+        self.gc.track(instance)
         self.push(instance)
         # 检查是否有构造函数
         if "构造" in klass["methods"]:

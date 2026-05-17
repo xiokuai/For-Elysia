@@ -83,11 +83,16 @@ class Function:
         func_env = Environment(self.closure)
         for param, arg in zip(self.params, args):
             func_env.define(param, arg)
+        self.interpreter.defer_stacks.append([])
         try:
             self.interpreter.exec_stmts(self.body, func_env)
             return None
         except ReturnSignal as ret:
             return ret.value
+        finally:
+            defers = self.interpreter.defer_stacks.pop() if self.interpreter.defer_stacks else []
+            for expr, env in reversed(defers):
+                self.interpreter.eval(expr, env)
 
 
 class Interpreter:
@@ -100,6 +105,7 @@ class Interpreter:
             self.global_env.define(name, func)
             
         self.global_env.define("导入", self._builtin_import)
+        self.defer_stacks = []
 
     def _builtin_import(self, module_path):
         import os
@@ -155,7 +161,13 @@ class Interpreter:
 
     def run(self, program):
         """执行程序"""
-        self.exec_stmts(program.statements, self.global_env)
+        self.defer_stacks.append([])
+        try:
+            self.exec_stmts(program.statements, self.global_env)
+        finally:
+            defers = self.defer_stacks.pop() if self.defer_stacks else []
+            for expr, env in reversed(defers):
+                self.eval(expr, env)
 
     def exec_stmts(self, stmts, env):
         """执行语句列表"""
@@ -269,6 +281,9 @@ class Interpreter:
 
         elif isinstance(stmt, ast.Program):
             self.exec_stmts(stmt.statements, env)
+
+        elif isinstance(stmt, ast.DeferStmt):
+            self.defer_stacks[-1].append((stmt.expr, env))
 
         else:
             raise RuntimeError(f"未知的语句类型: {type(stmt).__name__}")
@@ -501,11 +516,16 @@ class Interpreter:
             func_env = Environment(callee.closure)
             for param, arg in zip(callee.params, args):
                 func_env.define(param, arg)
+            self.defer_stacks.append([])
             try:
                 self.exec_stmts(callee.body, func_env)
                 return None
             except ReturnSignal as ret:
                 return ret.value
+            finally:
+                defers = self.defer_stacks.pop() if self.defer_stacks else []
+                for expr, env in reversed(defers):
+                    self.eval(expr, env)
 
         if callable(callee):
             try:
@@ -566,6 +586,13 @@ class Interpreter:
         if isinstance(obj, str) and prop in STRING_METHODS:
             return lambda *args: STRING_METHODS[prop](obj, *args)
 
+        # 允许访问原生 Python 对象的属性/方法
+        if hasattr(obj, prop):
+            val = getattr(obj, prop)
+            if callable(val):
+                return val
+            return val
+
         raise RuntimeError(f"类型 {type(obj).__name__} 没有属性 '{prop}'")
 
     def eval_method(self, node, env):
@@ -597,6 +624,12 @@ class Interpreter:
                 if callable(func):
                     return func(*args)
             raise RuntimeError(f"对象没有方法 '{method}'")
+
+        # 允许调用原生 Python 对象的方法
+        if hasattr(obj, method):
+            func = getattr(obj, method)
+            if callable(func):
+                return func(*args)
 
         raise RuntimeError(f"类型 {type(obj).__name__} 没有方法 '{method}'")
 

@@ -215,3 +215,10 @@ class ClassDef(Node):
     def __init__(self, name, methods):
         self.name = name
         self.methods = methods # list of FuncDef
+
+
+class DeferStmt(Node):
+    """延迟 表达式"""
+    def __init__(self, expr):
+        self.expr = expr
+

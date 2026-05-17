@@ -83,6 +83,10 @@ class Parser:
             return ast.ContinueStmt()
         if tok.type == TT.TRY:
             return self.parse_try_catch()
+        if tok.type == TT.DEFER:
+            self.advance()
+            expr = self.parse_expr()
+            return ast.DeferStmt(expr)
         if tok.type == TT.IDENTIFIER and tok.value == "类":
             return self.parse_class()
 

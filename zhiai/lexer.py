@@ -38,6 +38,8 @@ class TT(Enum):
     TRY = auto()          # 尝试
     CATCH = auto()        # 捕获
     END = auto()          # 结束
+    DEFER = auto()        # 延迟
+
 
     # 运算符
     PLUS = auto()         # +
@@ -103,6 +105,7 @@ KEYWORDS = {
     "尝试": TT.TRY,
     "捕获": TT.CATCH,
     "结束": TT.END,
+    "延迟": TT.DEFER,
 }
 
 

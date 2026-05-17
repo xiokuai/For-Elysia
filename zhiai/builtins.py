@@ -10,11 +10,213 @@ import tkinter as _tk
 from tkinter import messagebox as _mb
 from tkinter import simpledialog as _sd
 import datetime as _datetime
+import concurrent.futures as _futures
+import threading as _threading
 
 
 class ZhiAiError(Exception):
     """致爱自定义错误"""
     pass
+
+
+class Option:
+    """空安全保护类型 (Option)"""
+    def __init__(self, value, has_value):
+        self._value = value
+        self._has_value = has_value
+
+    def 是空(self):
+        return not self._has_value
+
+    def 是有(self):
+        return self._has_value
+
+    def 获取(self):
+        if not self._has_value:
+            raise ZhiAiError("空值安全异常: 尝试在空值(Option.空值)上调用获取()方法")
+        return self._value
+
+    def 取值(self):
+        return self.获取()
+
+    def 获取默认(self, default_val):
+        return self._value if self._has_value else default_val
+
+    def 映射(self, callback):
+        if not self._has_value:
+            return Option(None, False)
+        wrapped = wrap_callable(callback)
+        res = wrapped(self._value)
+        return Option(res, True)
+
+    def __repr__(self):
+        return f"空安全.有值({repr(self._value)})" if self._has_value else "空安全.空值()"
+
+
+class Result:
+    """运行结果类型 (Result)"""
+    def __init__(self, data, error, is_ok):
+        self._data = data
+        self._error = error
+        self._is_ok = is_ok
+
+    def 是成功(self):
+        return self._is_ok
+
+    def 是失败(self):
+        return not self._is_ok
+
+    def 获取(self):
+        if not self._is_ok:
+            raise ZhiAiError(f"运行结果异常: 尝试在失败(Result.失败)上调用获取()方法, 内部错误: {self._error}")
+        return self._data
+
+    def 取值(self):
+        return self.获取()
+
+    def 获取错误(self):
+        return self._error
+
+    def 映射(self, callback):
+        if not self._is_ok:
+            return Result(None, self._error, False)
+        wrapped = wrap_callable(callback)
+        res = wrapped(self._data)
+        return Result(res, None, True)
+
+    def __repr__(self):
+        return f"运行结果.成功({repr(self._data)})" if self._is_ok else f"运行结果.失败({repr(self._error)})"
+
+
+def _有值(val):
+    return Option(val, True)
+
+def _空值():
+    return Option(None, False)
+
+def _成功(data):
+    return Result(data, None, True)
+
+def _失败(err):
+    return Result(None, err, False)
+
+
+def _延迟(callback):
+    """注册延迟执行函数"""
+    global CURRENT_VM
+    if CURRENT_VM:
+        if CURRENT_VM.call_stack:
+            CURRENT_VM.call_stack[-1].deferred.append(callback)
+        else:
+            CURRENT_VM.deferred.append(callback)
+    return None
+
+
+# ── 向量 SIMD 加速器 与 并行原语 ──────────────────────────────────────
+try:
+    import numpy as _np
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
+
+class Vector:
+    """数据级 SIMD 并行向量"""
+    def __init__(self, elements):
+        if not isinstance(elements, list):
+            raise ZhiAiError("向量初始化：参数必须是数组列表")
+        self._data = [float(x) for x in elements]
+        
+    def 加(self, other):
+        if not isinstance(other, Vector):
+            raise ZhiAiError("向量加法：参数必须是另一个向量")
+        if len(self._data) != len(other._data):
+            raise ZhiAiError("向量加法：维度不匹配")
+        if _HAS_NUMPY:
+            res = _np.array(self._data) + _np.array(other._data)
+            return Vector(res.tolist())
+        else:
+            return Vector([a + b for a, b in zip(self._data, other._data)])
+            
+    def 减(self, other):
+        if not isinstance(other, Vector):
+            raise ZhiAiError("向量减法：参数必须是另一个向量")
+        if len(self._data) != len(other._data):
+            raise ZhiAiError("向量减法：维度不匹配")
+        if _HAS_NUMPY:
+            res = _np.array(self._data) - _np.array(other._data)
+            return Vector(res.tolist())
+        else:
+            return Vector([a - b for a, b in zip(self._data, other._data)])
+            
+    def 乘(self, val):
+        if isinstance(val, (int, float)):
+            if _HAS_NUMPY:
+                res = _np.array(self._data) * val
+                return Vector(res.tolist())
+            else:
+                return Vector([x * val for x in self._data])
+        elif isinstance(val, Vector):
+            if len(self._data) != len(val._data):
+                raise ZhiAiError("向量乘法：维度不匹配")
+            if _HAS_NUMPY:
+                res = _np.array(self._data) * _np.array(val._data)
+                return Vector(res.tolist())
+            else:
+                return Vector([a * b for a, b in zip(self._data, val._data)])
+        else:
+            raise ZhiAiError("向量乘法：不支持的操作数类型")
+            
+    def 点积(self, other):
+        if not isinstance(other, Vector):
+            raise ZhiAiError("向量点积：参数必须是另一个向量")
+        if len(self._data) != len(other._data):
+            raise ZhiAiError("向量点积：维度不匹配")
+        if _HAS_NUMPY:
+            return float(_np.dot(self._data, other._data))
+        else:
+            return sum(a * b for a, b in zip(self._data, other._data))
+            
+    def 列表(self):
+        return list(self._data)
+        
+    def __repr__(self):
+        return f"向量({repr(self._data)})"
+
+def _向量(elements):
+    return Vector(elements)
+
+class AsyncTask:
+    """异步任务 Future 句柄"""
+    def __init__(self, future):
+        self._future = future
+        
+    def 获取(self):
+        return self._future.result()
+        
+    def 取值(self):
+        return self.获取()
+        
+    def 是完成(self):
+        return self._future.done()
+        
+    def __repr__(self):
+        return f"异步任务(是否完成={self.是完成()})"
+
+def _异步(func, *args):
+    """启动一个异步线程任务"""
+    wrapped = wrap_callable(func)
+    executor = _futures.ThreadPoolExecutor(max_workers=1)
+    fut = executor.submit(wrapped, *args)
+    return AsyncTask(fut)
+
+def _并行映射(func, arr):
+    """多核并行映射 (Parallel Map)"""
+    if not isinstance(arr, list):
+        raise ZhiAiError("并行映射：第二个参数必须是数组")
+    wrapped = wrap_callable(func)
+    with _futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(wrapped, arr))
+    return results
 
 
 # ── 内置函数 ──────────────────────────────────────────────────────────
@@ -498,6 +700,12 @@ def _索引(arr, item):
 
 def _命令行参数():
     """获取命令行参数（不含解释器和脚本名）"""
+    if len(_sys.argv) >= 2 and _sys.argv[1] in ("compile", "run", "exec"):
+        return _sys.argv[2:]
+    for i, arg in enumerate(_sys.argv):
+        if arg.endswith(".za") or arg.endswith(".zab"):
+            if "main.za" in arg or "compiler" in arg:
+                return _sys.argv[i+1:]
     return _sys.argv[2:]
 
 
@@ -524,6 +732,16 @@ BUILTINS = {
     "是对象": _是对象,
     "是布尔": _是布尔,
     "是空": _是空,
+    # SIMD 与 并行计算原语
+    "向量": _向量,
+    "异步": _异步,
+    "并行映射": _并行映射,
+    # 空值安全与异常结果
+    "有值": _有值,
+    "空值": _空值,
+    "成功": _成功,
+    "失败": _失败,
+    "延迟": _延迟,
     # 文件I/O
     "读文件": _读文件,
     "写文件": _写文件,
@@ -600,6 +818,8 @@ def wrap_callable(func):
 def _筛选(arr, func):
     """筛选满足条件的元素: 筛选(数组, 函数)"""
     if not isinstance(arr, list):
+        if hasattr(arr, "筛选"):
+            return getattr(arr, "筛选")(func)
         raise RuntimeError("筛选: 第一个参数必须是数组")
     func = wrap_callable(func)
     return [item for item in arr if func(item)]
@@ -608,6 +828,8 @@ def _筛选(arr, func):
 def _映射(arr, func):
     """对每个元素执行函数: 映射(数组, 函数)"""
     if not isinstance(arr, list):
+        if hasattr(arr, "映射"):
+            return getattr(arr, "映射")(func)
         raise RuntimeError("映射: 第一个参数必须是数组")
     func = wrap_callable(func)
     return [func(item) for item in arr]
