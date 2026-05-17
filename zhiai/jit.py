@@ -7,6 +7,29 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from zhiai import ast_nodes as za_ast
 from zhiai.builtins import BUILTINS
 
+# ── JIT 运行时助手 (Module Level for AOT Support) ──
+
+def _za_get_prop(obj, prop):
+    if hasattr(obj, "get_prop"): return obj.get_prop(prop)
+    if isinstance(obj, dict): return obj.get(prop)
+    return getattr(obj, prop, None)
+
+def _za_set_prop(obj, prop, val):
+    if hasattr(obj, "set_prop"): obj.set_prop(prop, val)
+    elif isinstance(obj, dict): obj[prop] = val
+    else: setattr(obj, prop, val)
+    return val
+
+def _za_method_call(obj, method, *args):
+    if hasattr(obj, "get_prop"):
+        m = obj.get_prop(method)
+        if callable(m): return m(*args)
+    if isinstance(obj, dict): 
+        m = obj[method]
+        return m(*args)
+    return getattr(obj, method)(*args)
+
+
 class JITCompiler:
     """致爱 JIT 转译器 — 将致爱 AST 转换为 Python 源代码"""
     
@@ -22,6 +45,8 @@ class JITCompiler:
         self.indent = 0
         self.emit("# 致爱 JIT 自动生成的 Python 代码")
         self.emit("import sys")
+        # 导入助手函数
+        self.emit("from zhiai.jit import _za_get_prop, _za_set_prop, _za_method_call")
         self.emit("")
         
         self.visit(program)
@@ -49,7 +74,6 @@ class JITCompiler:
         self.emit(f"{node.name} = {val} # 常量")
 
     def visit_ExprStmt(self, node):
-        # 赋值和复合赋值语句会自己调用 emit，这里不需要额外处理
         if isinstance(node.expr, (za_ast.Assign, za_ast.CompoundAssign)):
             self.visit(node.expr)
         else:
@@ -121,6 +145,15 @@ class JITCompiler:
             for stmt in node.body: self.visit(stmt)
         self.indent -= 1
 
+    def visit_AsyncFuncDef(self, node):
+        params = ", ".join(node.params)
+        self.emit(f"async def {node.name}({params}):")
+        self.indent += 1
+        if not node.body: self.emit("pass")
+        else:
+            for stmt in node.body: self.visit(stmt)
+        self.indent -= 1
+
     def visit_ReturnStmt(self, node):
         val = self.visit(node.expr) if node.expr else "None"
         self.emit(f"return {val}")
@@ -140,6 +173,11 @@ class JITCompiler:
         self.indent += 1
         for stmt in node.catch_body: self.visit(stmt)
         self.indent -= 1
+
+    def visit_DeferStmt(self, node):
+        # 简单 JIT 模式暂不支持 defer，回退到普通执行
+        self.emit(f"# Defer fallback: {self.visit(node.expr)}")
+        self.emit(f"{self.visit(node.expr)}")
 
     # ── 表达式处理 ──
 
@@ -167,40 +205,42 @@ class JITCompiler:
         return node.name
 
     def visit_UnaryOp(self, node):
-        op_map = {"-": "-", "NOT": "not "}
+        # 修复 Bug #22: 映射 ! 运算符
+        op_map = {"-": "-", "非": "not ", "!": "not ", "NOT": "not "}
         op = op_map.get(node.op, node.op)
         return f"({op}{self.visit(node.operand)})"
 
     def visit_BinaryOp(self, node):
+        # 修复 Bug #21: 映射 && 和 || 运算符
         op_map = {
             "+": "+", "-": "-", "*": "*", "/": "/", "%": "%", "**": "**",
             "==": "==", "!=": "!=", "<": "<", ">": ">", "<=": "<=", ">=": ">=",
-            "并且": " and ", "或者": " or ", "AND": " and ", "OR": " or "
+            "并且": " and ", "或者": " or ", "AND": " and ", "OR": " or ",
+            "&&": " and ", "||": " or "
         }
         op = op_map.get(node.op, node.op)
         return f"({self.visit(node.left)} {op} {self.visit(node.right)})"
 
+    def visit_AwaitExpr(self, node):
+        return f"(await {self.visit(node.expr)})"
+
     def visit_target(self, node):
-        """生成赋值目标字符串"""
         if isinstance(node, za_ast.Identifier):
             return node.name
         if isinstance(node, za_ast.IndexAccess):
             return f"{self.visit(node.obj)}[{self.visit(node.index)}]"
         if isinstance(node, za_ast.PropertyAccess):
-            # 修复 Bug #8: 返回一个兼容 getattr 的目标描述
             return f"getattr({self.visit(node.obj)}, '{node.prop}')"
         return "unknown_target"
 
     def visit_Assign(self, node):
         if isinstance(node.target, za_ast.PropertyAccess):
-            # 修复 Bug #8: 属性赋值逻辑
             obj = self.visit(node.target.obj)
             prop = node.target.prop
             val = self.visit(node.value)
             self.emit(f"_za_set_prop({obj}, '{prop}', {val})")
         elif isinstance(node.target, za_ast.Identifier) and self.indent > 0:
-            # 修复 Bug #12: 简单的闭包变量修改支持 (尝试自动 nonlocal)
-            # 注意：这里需要更复杂的 scope 检查，目前是预防性尝试
+            # 修复 Bug #12: 基础闭包变量修改支持
             self.emit(f"try: nonlocal {node.target.name}")
             self.emit(f"except: pass")
             target = self.visit_target(node.target)
@@ -216,7 +256,6 @@ class JITCompiler:
             obj = self.visit(node.target.obj)
             prop = node.target.prop
             val = self.visit(node.value)
-            # 简单实现：obj.prop = obj.prop + val
             self.emit(f"_za_set_prop({obj}, '{prop}', _za_get_prop({obj}, '{prop}') {node.op} {val})")
         else:
             target = self.visit_target(node.target)
@@ -240,8 +279,14 @@ class JITCompiler:
         return f"_za_method_call({obj}, '{node.method}', {', '.join(args)})"
 
     def visit_AnonymousFunc(self, node):
-        # Python 的 lambda 只能是表达式，简单实现
-        return f"(lambda {', '.join(node.params)}: {self.visit(node.body[0].expr) if len(node.body)==1 and isinstance(node.body[0], za_ast.ReturnStmt) else 'None'})"
+        # 修复 Bug #12: 支持多行匿名函数（通过内部嵌套定义）
+        func_name = f"__anon_{len(self.code)}__"
+        params = ", ".join(node.params)
+        self.emit(f"def {func_name}({params}):")
+        self.indent += 1
+        for stmt in node.body: self.visit(stmt)
+        self.indent -= 1
+        return func_name
 
 def exec_jit(ast_program):
     """编译并执行 JIT 代码"""
@@ -251,21 +296,7 @@ def exec_jit(ast_program):
     # 准备执行环境
     env = {}
     env.update(BUILTINS)
-    
-    # JIT 运行时助手
-    def _za_get_prop(obj, prop):
-        if isinstance(obj, dict): return obj.get(prop)
-        return getattr(obj, prop, None)
-    
-    def _za_set_prop(obj, prop, val):
-        if isinstance(obj, dict): obj[prop] = val
-        else: setattr(obj, prop, val)
-        return val
-
-    def _za_method_call(obj, method, *args):
-        if isinstance(obj, dict): return obj[method](*args)
-        return getattr(obj, method)(*args)
-
+    # 注入助手
     env["_za_get_prop"] = _za_get_prop
     env["_za_set_prop"] = _za_set_prop
     env["_za_method_call"] = _za_method_call

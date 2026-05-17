@@ -378,3 +378,279 @@ def _命令行参数():
 | `zhiai/builtins.py` | #3, #4, #13 | 高 |
 | `zhiai/interpreter.py` | #4, #6 | 中 |
 | `zhiai/jit.py` | #8, #12 | 低 |
+
+---
+
+# 第二轮深入分析 — 新发现的 Bug
+
+> 分析范围: `_fastvm.pyx`, `zhiai_cli.py`, `jit.py` 运算符映射, `interpreter.py` 边缘情况
+
+---
+
+## 🔴 Bug #14: `_fastvm.pyx` — 完全缺失垃圾回收 (GC) 系统
+
+**文件**: `zhiai/_fastvm.pyx`
+
+**描述**: `_fastvm.pyx` 的 `VM.__init__` 中没有创建 `self.gc` 实例，也没有导入 GC 模块。对比 `vm.py` 的 `__init__`：
+
+```python
+# vm.py (有 GC)
+from zhiai.gc import MarkSweepGC
+self.gc = MarkSweepGC()
+self.global_env.define("垃圾回收", self.gc.collect)
+```
+
+```python
+# _fastvm.pyx (无 GC)
+class VM:
+    def __init__(self):
+        self.stack = []
+        self.global_env = Environment()
+        # ... 没有 self.gc
+```
+
+**影响**: 使用 Cython 加速 VM 时，所有堆对象（数组、对象、类实例）都不会被致爱的 GC 追踪，Python 的引用计数 GC 虽然会回收大部分对象，但循环引用场景下会内存泄漏。`垃圾回收` 内置函数也不可用。
+
+---
+
+## 🔴 Bug #15: `_fastvm.pyx:_op_MAKE_ARRAY/MAKE_OBJECT/NEW` — 缺少 `gc.track()` 调用
+
+**文件**: `zhiai/_fastvm.pyx` 第 801-816 行, 第 862-865 行
+
+**描述**: `_fastvm.pyx` 中 `_op_MAKE_ARRAY`、`_op_MAKE_OBJECT` 和 `_op_NEW` 创建的堆对象都没有调用 `self.gc.track()`。对比 `vm.py`：
+
+```python
+# vm.py (正确)
+def _op_MAKE_ARRAY(self, instr):
+    # ...
+    arr = []
+    # ...
+    self.gc.track(arr)     # ← 追踪
+    self.push(arr)
+
+def _op_NEW(self, instr):
+    # ...
+    instance = Instance(klass)
+    self.gc.track(instance) # ← 追踪
+```
+
+```python
+# _fastvm.pyx (缺失)
+def _op_MAKE_ARRAY(self, instr):
+    # ...
+    arr = []
+    # ...
+    self.push(arr)          # ← 没有 gc.track()
+
+def _op_NEW(self, instr):
+    klass = self.pop()
+    instance = Instance(klass)
+    self.push(instance)     # ← 没有 gc.track()
+```
+
+**影响**: 即使 Bug #14 被修复（添加 GC 实例），这三个指令仍然不会追踪新创建的对象，GC 无法感知它们。
+
+---
+
+## 🔴 Bug #16: `_fastvm.pyx:_op_LOAD_INDEX` — 缺少边界检查 (vm.py 已修复但未回移)
+
+**文件**: `zhiai/_fastvm.pyx` 第 560-576 行
+
+**描述**: `vm.py` 的 `_op_LOAD_INDEX` 已被修复，添加了 `idx < 0 or idx >= len(obj)` 的边界检查（Bug #5 已修复）。但 `_fastvm.pyx` 的同一函数仍然没有边界检查：
+
+```python
+# _fastvm.pyx:560-567 (未修复)
+def _op_LOAD_INDEX(self, instr):
+    index = self.pop()
+    obj = self.pop()
+    if isinstance(obj, list):
+        idx = int(index)
+        if idx < 0:
+            idx += len(obj)
+        self.push(obj[idx])  # ← 无上界检查，可能 IndexError
+```
+
+**影响**: 使用 Cython VM 时，数组/字符串越界访问会抛出 Python 原生 `IndexError`，而非友好的 `VMError`。
+
+---
+
+## 🔴 Bug #17: `_fastvm.pyx:_op_STORE_INDEX` — 缺少边界检查 (vm.py 已修复但未回移)
+
+**文件**: `zhiai/_fastvm.pyx` 第 578-588 行
+
+**描述**: 与 Bug #16 同理，`vm.py` 的 `_op_STORE_INDEX` 已修复但 `_fastvm.pyx` 未同步：
+
+```python
+# _fastvm.pyx:578-583 (未修复)
+def _op_STORE_INDEX(self, instr):
+    index = self.pop()
+    obj = self.pop()
+    value = self.pop()
+    if isinstance(obj, list):
+        obj[int(index)] = value  # ← 无边界检查，负索引行为不一致
+```
+
+**影响**: 同 Bug #16。
+
+---
+
+## 🔴 Bug #18: `_fastvm.pyx:_op_BINOP` — 无除零检查和字符串拼接 (与 vm.py Bug #1 相同)
+
+**文件**: `zhiai/_fastvm.pyx` 第 552-558 行
+
+**描述**: `_fastvm.pyx` 的 `_op_BINOP` 与 `vm.py` 的 Bug #1 完全相同，缺少除零检查和字符串拼接：
+
+```python
+# _fastvm.pyx:552-558
+def _op_BINOP(self, instr):
+    op = instr[1]
+    b, a = self.pop(), self.pop()
+    if op == '+': self.push(a + b)       # 缺少字符串拼接
+    elif op == '-': self.push(a - b)
+    elif op == '*': self.push(a * b)
+    elif op == '/': self.push(a / b)     # 缺少除零检查
+```
+
+**影响**: 同 Bug #1。
+
+---
+
+## 🔴 Bug #19: `_fastvm.pyx:to_str` — 对 `float('inf')` 和 `float('nan')` 崩溃
+
+**文件**: `zhiai/_fastvm.pyx` 第 409-417 行
+
+**描述**: 与 Bug #4 完全相同，`to_str` 在处理 `float('inf')` 和 `float('nan')` 时会崩溃：
+
+```python
+# _fastvm.pyx:414-416
+if isinstance(value, float):
+    if value == int(value):  # float('inf') -> OverflowError, float('nan') -> ValueError
+        return str(int(value))
+```
+
+**影响**: 同 Bug #4。使用 Cython VM 时触发。
+
+---
+
+## 🟡 Bug #20: `_fastvm.pyx:_op_CALL` — 缺少 JIT 编译支持
+
+**文件**: `zhiai/_fastvm.pyx` 第 698-733 行
+
+**描述**: `vm.py` 的 `_op_CALL` 包含 JIT 热点检测和编译触发逻辑（`jit_count` 追踪、调用 `compile_function`、设置 `jitted_func`）。`_fastvm.pyx` 的 `_op_CALL` 完全没有这些：
+
+```python
+# vm.py (有 JIT)
+def _op_CALL(self, instr):
+    # ...
+    if callee["type"] == "function":
+        callee.setdefault("jit_count", 0)
+        callee["jit_count"] = callee.get("jit_count", 0) + 1
+        if callee["jit_count"] > 15 and callee.get("jitted_func") is None:
+            from zhiai.vm_jit import compile_function
+            callee["jitted_func"] = compile_function(callee, self.global_env)
+        if callee.get("jitted_func"):
+            # 使用 JIT 编译的代码
+            ...
+```
+
+```python
+# _fastvm.pyx (无 JIT)
+def _op_CALL(self, instr):
+    # ... 直接解释执行，无 JIT 触发
+```
+
+**影响**: 使用 Cython VM 时，热点函数永远不会被 JIT 编译，性能不如预期。
+
+---
+
+## 🟡 Bug #21: `jit.py:visit_BinaryOp` — `&&` 和 `||` 运算符未映射
+
+**文件**: `zhiai/jit.py` 第 174-181 行
+
+**描述**: `visit_BinaryOp` 的操作符映射表包含 `"并且"` 和 `"或者"`，但不包含 `"&&"` 和 `"||"`。致爱的 lexer 将 `&&` 解析为 `TT.AND_AND`（值为 `"&&"`），将 `||` 解析为 `TT.OR_OR`（值为 `"||"`）。当源码使用 `&&` 或 `||` 时，AST 中的运算符是 `"&&"` 和 `"||"`，不会匹配映射表中的 `"并且"` 和 `"或者"`。
+
+```python
+def visit_BinaryOp(self, node):
+    op_map = {
+        # ...
+        "并且": " and ", "或者": " or ", "AND": " and ", "OR": " or "
+        # 缺少 "&&" 和 "||"
+    }
+    op = op_map.get(node.op, node.op)  # "&&" 不在映射中，直接透传
+    return f"({self.visit(node.left)} {op} {self.visit(node.right)})"
+```
+
+**影响**: 使用 `&&` 或 `||` 的表达式在 JIT 转译模式下会生成无效的 Python 代码（如 `(a && b)` 而非 `(a and b)`），导致 `SyntaxError`。
+
+**修复建议**:
+
+```python
+op_map = {
+    # ...
+    "并且": " and ", "或者": " or ", "AND": " and ", "OR": " or ",
+    "&&": " and ", "||": " or "
+}
+```
+
+---
+
+## 🟡 Bug #22: `jit.py:visit_UnaryOp` — `"!"` 运算符未映射
+
+**文件**: `zhiai/jit.py` 第 169-172 行
+
+**描述**: 与 Bug #8 相关。`visit_UnaryOp` 映射了 `"NOT"` 但 lexer 实际产生 `"非"`（`TT.NOT`）和 `"!"`（`TT.NOT_BANG`）。AST 中 `!expr` 的运算符是 `"!"`，不在映射中。
+
+```python
+def visit_UnaryOp(self, node):
+    op_map = {"-": "-", "NOT": "not "}  # "!" 和 "非" 都不在映射中
+    op = op_map.get(node.op, node.op)   # "!" 直接透传
+    return f"({op}{self.visit(node.operand)})"
+```
+
+**影响**: 使用 `!` 操作符的表达式在 JIT 模式下会生成 `(!expr)` 而非 `(not expr)`，导致 `SyntaxError`。
+
+**修复建议**:
+
+```python
+op_map = {"-": "-", "非": "not ", "!": "not ", "NOT": "not "}
+```
+
+---
+
+## 🟡 Bug #23: `zhiai_cli.py:cmd_compile_aot` — 导入不存在的模块级函数
+
+**文件**: `zhiai_cli.py` 第 115 行
+
+**描述**: AOT 编译功能在生成的临时 Python 文件中写入：
+
+```python
+from zhiai.jit import _za_get_prop, _za_set_prop, _za_method_call
+```
+
+但这三个函数在 `zhiai/jit.py` 中是 `exec_jit()` 函数内部的**局部函数**，不是模块级导出。`from zhiai.jit import _za_get_prop` 会抛出 `ImportError`。
+
+```python
+# zhiai/jit.py
+def exec_jit(ast_program):
+    # ...
+    def _za_get_prop(obj, prop):    # ← 局部函数，不可导入
+        # ...
+    def _za_set_prop(obj, prop, val): # ← 局部函数，不可导入
+        # ...
+    def _za_method_call(obj, method, *args): # ← 局部函数，不可导入
+        # ...
+```
+
+**影响**: 使用 `python zhiai_cli.py compile script.za --aot` 进行 AOT 编译时，生成的 Python 文件无法运行，Nuitka 编译也会失败。
+
+**修复建议**: 将 `_za_get_prop`、`_za_set_prop`、`_za_method_call` 提升为 `zhiai/jit.py` 的模块级函数。
+
+---
+
+## 第二轮分析附录: 修改文件汇总
+
+| 文件 | Bug 编号 | 修改优先级 |
+|------|----------|-----------|
+| `zhiai/_fastvm.pyx` | #14, #15, #16, #17, #18, #19, #20 | 高 (与 vm.py 代码同步) |
+| `zhiai/jit.py` | #8, #12, #21, #22 | 中 |
+| `zhiai_cli.py` | #23 | 高 (AOT 编译完全不可用) |

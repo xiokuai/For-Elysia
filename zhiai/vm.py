@@ -79,7 +79,8 @@ OPCODE_LIST = [
     "CALL", "RET", "JMP", "JMP_IF", "JMP_IFNOT", "HALT", "BATCH_OP", "TRY",
     "END_TRY", "RAISE", "MAKE_CLASS", "MAKE_ARRAY", "MAKE_OBJECT", "PRINT",
     "NEW", "BREAKPOINT", "MAKE_FUNC", "CALL_METHOD", "LOAD_LOCAL", "STORE_LOCAL",
-    "LOAD_GLOBAL", "STORE_GLOBAL", "FAST_ADD", "FAST_SUB", "BINOP"
+    "LOAD_GLOBAL", "STORE_GLOBAL", "FAST_ADD", "FAST_SUB", "BINOP",
+    "ASYNC_CALL", "AWAIT"
 ]
 OPCODE_MAP = {op: i for i, op in enumerate(OPCODE_LIST)}
 
@@ -230,6 +231,8 @@ class VM:
             "FAST_ADD": self._op_FAST_ADD,
             "FAST_SUB": self._op_FAST_SUB,
             "BINOP": self._op_BINOP,
+            "ASYNC_CALL": self._op_ASYNC_CALL,
+            "AWAIT": self._op_AWAIT,
         }
 
         # 构建整数索引跳转表
@@ -475,6 +478,12 @@ class VM:
         if isinstance(value, bool):
             return "真" if value else "假"
         if isinstance(value, float):
+            if value != value:
+                return "NaN"
+            if value == float('inf'):
+                return "Infinity"
+            if value == float('-inf'):
+                return "-Infinity"
             if value == int(value):
                 return str(int(value))
         return str(value)
@@ -615,10 +624,20 @@ class VM:
     def _op_BINOP(self, instr):
         op = instr[1]
         b, a = self.pop(), self.pop()
-        if op == '+': self.push(a + b)
+        if op == '+':
+            if isinstance(a, str) or isinstance(b, str):
+                self.push(self.to_str(a) + self.to_str(b))
+            else:
+                self.push(a + b)
         elif op == '-': self.push(a - b)
         elif op == '*': self.push(a * b)
-        elif op == '/': self.push(a / b)
+        elif op == '/':
+            if b == 0:
+                raise VMError("除以零")
+            if isinstance(a, int) and isinstance(b, int) and a % b == 0:
+                self.push(a // b)
+            else:
+                self.push(a / b)
 
     def _op_LOAD_INDEX(self, instr):
         index = self.pop()
@@ -627,7 +646,7 @@ class VM:
             idx = int(index)
             if idx < 0: idx += len(obj)
             if idx < 0 or idx >= len(obj):
-                raise VMError(f"索引越界: {idx}")
+                raise VMError(f"索引越界: {idx} (长度: {len(obj)})")
             self.push(obj[idx])
         elif isinstance(obj, dict):
             self.push(obj.get(index))
@@ -642,7 +661,7 @@ class VM:
             idx = int(index)
             if idx < 0: idx += len(obj)
             if idx < 0 or idx >= len(obj):
-                raise VMError(f"索引赋值越界: {idx}")
+                raise VMError(f"索引赋值越界: {idx} (长度: {len(obj)})")
             obj[idx] = value
         elif isinstance(obj, dict):
             obj[index] = value
@@ -676,6 +695,8 @@ class VM:
                             self.push(obj.fields[offset])
                             return
                     # Fall through to slow path / add new entry
+                elif cache_type == 'MEGA':
+                    pass # MEGA state: directly fall through to slow path
 
             # Slow path
             offset = obj.shape.get_offset(name)
@@ -945,12 +966,27 @@ class VM:
         klass = self.pop()
         instance = Instance(klass)
         self.gc.track(instance)
-        self.push(instance)
         # 检查是否有构造函数
         if "构造" in klass["methods"]:
             constructor = klass["methods"]["构造"]
-            # 自动调用构造函数（这里已在 _op_CALL 中完整实现，此处保留占位）
-            pass
+            # 构造函数处理与 _op_CALL 逻辑对齐
+            func_env = Environment(constructor.get("closure", self.global_env))
+            func_env.define("这", instance)
+            frame = self.frame_pool.acquire(
+                constructor["instructions"],
+                self.ip,
+                env=func_env,
+                constants=self.constants,
+                locals_count=constructor.get("locals_count", 0),
+                is_constructor=True,
+                instance=instance
+            )
+            self.call_stack.append(frame)
+            self.instructions = constructor["instructions"]
+            self.constants = constructor.get("constants", [])
+            self.ip = constructor.get("entry_ip", 0)
+        else:
+            self.push(instance)
 
     def _op_MAKE_FUNC(self, instr):
         name = self.constants[instr[1]]

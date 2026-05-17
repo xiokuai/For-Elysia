@@ -159,8 +159,16 @@ def compile_function(func_obj, global_env):
             code.append("                wrapped = wrap_callable(callee)")
             code.append(f"                r[{d - argc - 1}] = wrapped(*func_args)")
             code.append("            ip += 1")
-        else:
-            return None # 遇到不支持 3AC 加速的复杂指令，安全回退到 VM 解释器
+        elif op_name == "LOAD_PROP":
+            code.append(f"            obj = r[{d-1}]")
+            code.append(f"            name = constants[{instr[1]}]")
+            code.append("            if hasattr(obj, 'get_prop'):")
+            code.append(f"                r[{d-1}] = obj.get_prop(name)")
+            code.append("            elif isinstance(obj, dict):")
+            code.append(f"                r[{d-1}] = obj.get(name)")
+            code.append("            else:")
+            code.append(f"                r[{d-1}] = getattr(obj, name, None)")
+            code.append("            ip += 1")
             
     code.append("    return None")
     

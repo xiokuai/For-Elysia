@@ -275,7 +275,12 @@ def _转换文字(value):
     if isinstance(value, bool):
         return "真" if value else "假"
     if isinstance(value, float):
-        # 去掉多余的 .0
+        if value != value:
+            return "NaN"
+        if value == float('inf'):
+            return "Infinity"
+        if value == float('-inf'):
+            return "-Infinity"
         if value == int(value):
             return str(int(value))
     return str(value)
@@ -448,7 +453,7 @@ def _网络发送(url, data_dict):
     """发送 POST 请求（JSON 格式）"""
     try:
         data = _json.dumps(data_dict).encode('utf-8')
-        req = _urllib.Request(str(url), data=data, content_type='application/json')
+        req = _urllib.Request(str(url), data=data, headers={'Content-Type': 'application/json'})
         with _urllib.urlopen(req) as response:
             return response.read().decode('utf-8')
     except Exception as e:

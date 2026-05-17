@@ -277,9 +277,14 @@ class Interpreter:
             end = self.eval(stmt.end, env)
             step = self.eval(stmt.step, env) if stmt.step else 1
             i = start
+            first = True
             if step > 0:
                 while i <= end:
-                    env.define(stmt.var_name, i)
+                    if first:
+                        env.define(stmt.var_name, i)
+                        first = False
+                    else:
+                        env.set(stmt.var_name, i)
                     try:
                         res = self.exec_stmts(stmt.body, env)
                         if res is not None: return res
@@ -290,7 +295,11 @@ class Interpreter:
                     i += step
             elif step < 0:
                 while i >= end:
-                    env.define(stmt.var_name, i)
+                    if first:
+                        env.define(stmt.var_name, i)
+                        first = False
+                    else:
+                        env.set(stmt.var_name, i)
                     try:
                         res = self.exec_stmts(stmt.body, env)
                         if res is not None: return res
