@@ -23,7 +23,7 @@ function activate(context) {
     const keywords = [
         '让', '常量', '真', '假', '空', '并且', '或者', '非',
         '如果', '否则如果', '否则', '当', '时', '循环', '从', '到', '步长',
-        '对于', '每个', '在', '中', '函数', '返回', '中断', '继续', '尝试', '捕获', '结束', '延迟'
+        '对于', '每个', '在', '中', '函数', '返回', '中断', '继续', '尝试', '捕获', '结束', '延迟', '类', '新', '异步', '等待'
     ];
     const builtins = [
         '输出', '输入', '长度', '类型', '转换数字', '转换文字',
@@ -36,7 +36,7 @@ function activate(context) {
         '筛选', '映射', '排序', '归约', '查找', '每个', '任意', '全部',
         '反转', '分割', '替换', '修剪', '小写', '大写', '开头是', '结尾是',
         '矩阵相加', '矩阵相乘', '矩阵转置', '正则匹配', '正则替换',
-        '持有', '空值', '成功', '失败'
+        '持有', '空值', '成功', '失败', '数据库连接'
     ];
     // ─── 1. 深度语义补全 (Semantic IntelliSense) ────────────────────────
     const completionProvider = vscode.languages.registerCompletionItemProvider('zhiai', {
@@ -58,18 +58,16 @@ function activate(context) {
             let currentFuncLocals = [];
             for (let i = lines.length - 1; i >= 0; i--) {
                 const line = lines[i].trim();
-                // 查找包含当前位置的最近一个函数定义
-                if (line.startsWith('函数 ')) {
-                    const match = line.match(/函数\s+\w+\s*\(([^)]*)\)/);
+                if (line.startsWith('函数 ') || line.startsWith('异步 函数 ')) {
+                    const match = line.match(/函数\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)\s*\(([^)]*)\)/);
                     if (match) {
-                        currentFuncParams = match[1].split(',').map(p => p.trim()).filter(Boolean);
+                        currentFuncParams = match[2].split(',').map(p => p.trim()).filter(Boolean);
                     }
                     break;
                 }
-                // 收集局部声明
-                const letMatch = line.match(/让\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)\s*=/);
+                const letMatch = line.match(/(让|常量)\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)\s*=/);
                 if (letMatch) {
-                    currentFuncLocals.push(letMatch[1]);
+                    currentFuncLocals.push(letMatch[2]);
                 }
             }
             currentFuncParams.forEach(param => {
@@ -86,11 +84,9 @@ function activate(context) {
             const lineText = document.lineAt(position.line).text;
             const wordBeforeTrigger = lineText.substring(0, position.character).trim();
             if (wordBeforeTrigger.endsWith('.')) {
-                // 如果用户输入了 `实例.`，我们推荐优化的 Shape 属性和通用方法
-                const objectMethods = ['属性获取', '属性设置', '添加', '连接', '筛选', '查找', '分割', '替换', '大写', '小写'];
+                const objectMethods = ['添加', '连接', '筛选', '查找', '分割', '替换', '大写', '小写', '长度', '执行', '查询', '关闭', '获取', '取值', '是空', '是有'];
                 objectMethods.forEach(method => {
                     const item = new vscode.CompletionItem(method, vscode.CompletionItemKind.Method);
-                    item.detail = '对象或 Shape 方法';
                     completionItems.push(item);
                 });
             }
@@ -98,20 +94,16 @@ function activate(context) {
         }
     }, '.');
     context.subscriptions.push(completionProvider);
-    // ─── 2. 增强型错误诊断 (LSP 增强 & 实时检查 & Quick Fix) ─────────
+    // ─── 2. 增强型错误诊断 ───────────────────────────────────────────
     let diagnosticTimeout;
     const updateDiagnostics = (document) => {
         if (document.languageId !== 'zhiai')
             return;
-        // 仅抓取有效的本地工作区目录
         const workspaceRoot = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : path.dirname(document.fileName);
-        const cliPath = path.join(workspaceRoot, 'zhiai_cli.py');
-        // 执行防抖的静态检查
         if (diagnosticTimeout)
             clearTimeout(diagnosticTimeout);
         diagnosticTimeout = setTimeout(() => {
             try {
-                // 运行 Tokenizer & Parser 校验
                 const escapedRoot = workspaceRoot.replace(/\\/g, '/');
                 const escapedFile = document.fileName.replace(/\\/g, '/');
                 const cmd = `python -c "import sys; sys.path.insert(0, '${escapedRoot}'); from zhiai.lexer import tokenize; from zhiai.parser import parse; s=open('${escapedFile}', encoding='utf-8').read(); parse(tokenize(s))"`;
@@ -120,8 +112,6 @@ function activate(context) {
             }
             catch (err) {
                 const output = err.stderr ? err.stderr.toString() : err.message;
-                if (output.includes("ModuleNotFoundError"))
-                    return;
                 const match = output.match(/行 (\d+)/) || output.match(/line (\d+)/);
                 if (match) {
                     const line = parseInt(match[1]) - 1;
@@ -132,464 +122,201 @@ function activate(context) {
                     }
                 }
             }
-        }, 500); // 500ms 防抖
+        }, 500);
     };
-    // 注册实时输入检查事件
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(e => updateDiagnostics(e.document)), vscode.workspace.onDidOpenTextDocument(updateDiagnostics));
-    // 快速修复 Code Action Provider
-    const quickFixProvider = vscode.languages.registerCodeActionsProvider('zhiai', {
-        provideCodeActions(document, range, context) {
-            const actions = [];
-            const text = document.getText(range);
-            const spellingCorrections = {
-                '如果说': '如果',
-                '否则如果说': '否则如果',
-                '否则说': '否则',
-                '结束说': '结束'
-            };
-            // 全行扫描检测常见中文拼写语病
-            const lineText = document.lineAt(range.start.line).text;
-            Object.keys(spellingCorrections).forEach(badWord => {
-                if (lineText.includes(badWord)) {
-                    const corrected = spellingCorrections[badWord];
-                    const action = new vscode.CodeAction(`将拼写错误「${badWord}」修复为「${corrected}」`, vscode.CodeActionKind.QuickFix);
-                    const startCol = lineText.indexOf(badWord);
-                    const wordRange = new vscode.Range(range.start.line, startCol, range.start.line, startCol + badWord.length);
-                    action.edit = new vscode.WorkspaceEdit();
-                    action.edit.replace(document.uri, wordRange, corrected);
-                    action.isPreferred = true;
-                    actions.push(action);
+    // ─── 3. 大纲视图 (Document Symbol Provider) ──────────────────────
+    const symbolProvider = vscode.languages.registerDocumentSymbolProvider('zhiai', {
+        provideDocumentSymbols(document) {
+            const symbols = [];
+            for (let i = 0; i < document.lineCount; i++) {
+                const line = document.lineAt(i);
+                // 匹配函数
+                const funcMatch = line.text.match(/^(?:异步\s+)?函数\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)/);
+                if (funcMatch) {
+                    symbols.push(new vscode.DocumentSymbol(funcMatch[1], '函数', vscode.SymbolKind.Function, line.range, line.range));
+                    continue;
                 }
-            });
-            return actions;
+                // 匹配类
+                const classMatch = line.text.match(/^类\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)/);
+                if (classMatch) {
+                    symbols.push(new vscode.DocumentSymbol(classMatch[1], '类', vscode.SymbolKind.Class, line.range, line.range));
+                    continue;
+                }
+                // 匹配全局常量
+                const constMatch = line.text.match(/^常量\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)/);
+                if (constMatch) {
+                    symbols.push(new vscode.DocumentSymbol(constMatch[1], '常量', vscode.SymbolKind.Constant, line.range, line.range));
+                }
+            }
+            return symbols;
         }
     });
-    context.subscriptions.push(quickFixProvider);
-    // ─── 3. 悬停提示与文档外置 (Hover Provider) ─────────────────────
-    const hoverProvider = vscode.languages.registerHoverProvider('zhiai', {
+    context.subscriptions.push(symbolProvider);
+    // ─── 4. 跳转定义 (Definition Provider) ──────────────────────────
+    const definitionProvider = vscode.languages.registerDefinitionProvider('zhiai', {
+        provideDefinition(document, position) {
+            const range = document.getWordRangeAtPosition(position);
+            const word = document.getText(range);
+            for (let i = 0; i < document.lineCount; i++) {
+                const line = document.lineAt(i);
+                if (line.text.includes(`函数 ${word}`) || line.text.includes(`类 ${word}`) || line.text.includes(`让 ${word}`) || line.text.includes(`常量 ${word}`)) {
+                    return new vscode.Location(document.uri, line.range);
+                }
+            }
+            return null;
+        }
+    });
+    context.subscriptions.push(definitionProvider);
+    // ─── 5. 重命名 (Rename Provider) ─────────────────────────────────
+    const renameProvider = vscode.languages.registerRenameProvider('zhiai', {
+        provideRenameEdits(document, position, newName) {
+            const edit = new vscode.WorkspaceEdit();
+            const range = document.getWordRangeAtPosition(position);
+            const oldName = document.getText(range);
+            const regex = new RegExp(`\\b${oldName}\\b`, 'g');
+            for (let i = 0; i < document.lineCount; i++) {
+                const line = document.lineAt(i);
+                let m;
+                while ((m = regex.exec(line.text)) !== null) {
+                    const editRange = new vscode.Range(i, m.index, i, m.index + oldName.length);
+                    edit.replace(document.uri, editRange, newName);
+                }
+            }
+            return edit;
+        }
+    });
+    context.subscriptions.push(renameProvider);
+    // ─── 6. 参数提示 (Signature Help Provider) ───────────────────────
+    const signatureProvider = vscode.languages.registerSignatureHelpProvider('zhiai', {
+        provideSignatureHelp(document, position) {
+            const lineText = document.lineAt(position.line).text;
+            const openParenIndex = lineText.lastIndexOf('(', position.character);
+            if (openParenIndex === -1)
+                return new vscode.SignatureHelp();
+            const wordRange = document.getWordRangeAtPosition(new vscode.Position(position.line, openParenIndex - 1));
+            const funcName = document.getText(wordRange);
+            const help = new vscode.SignatureHelp();
+            // 查找定义以获取参数
+            for (let i = 0; i < document.lineCount; i++) {
+                const line = document.lineAt(i).text;
+                const m = line.match(new RegExp(`函数\\s+${funcName}\\s*\\(([^)]*)\\)`));
+                if (m) {
+                    const signature = new vscode.SignatureInformation(`${funcName}(${m[1]})`, '致爱自定义函数');
+                    signature.parameters = m[1].split(',').map(p => new vscode.ParameterInformation(p.trim()));
+                    help.signatures.push(signature);
+                    help.activeSignature = 0;
+                    help.activeParameter = lineText.substring(openParenIndex, position.character).split(',').length - 1;
+                    break;
+                }
+            }
+            return help;
+        }
+    }, '(', ',');
+    context.subscriptions.push(signatureProvider);
+    // ─── 7. 其他现有功能 (Hover, Eval, Fmt, Commands, Debug, ZAP) ─────
+    context.subscriptions.push(vscode.languages.registerHoverProvider('zhiai', {
         provideHover(document, position) {
             const range = document.getWordRangeAtPosition(position);
             if (!range)
                 return null;
             const word = document.getText(range);
-            if (hoverDocs[word]) {
+            if (hoverDocs[word])
                 return new vscode.Hover(new vscode.MarkdownString(hoverDocs[word]));
-            }
             return null;
         }
-    });
-    context.subscriptions.push(hoverProvider);
-    // ─── 4. 内联执行预览 (Eval Selection) ───────────────────────────
-    const evalCommand = vscode.commands.registerCommand('zhiai.evalSelection', () => {
-        const activeEditor = vscode.window.activeTextEditor;
-        if (!activeEditor)
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand('zhiai.evalSelection', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor)
             return;
-        const selection = activeEditor.selection;
-        const selectedText = activeEditor.document.getText(selection).trim();
-        if (!selectedText)
+        const text = editor.document.getText(editor.selection).trim();
+        if (!text)
             return;
-        const workspaceRoot = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : path.dirname(activeEditor.document.fileName);
-        // 调用 Python 解释器在 REPL 沙盒中单行求值并返回输出
-        const escapedCode = selectedText.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '; ');
-        const cmd = `python -c "import sys; sys.path.insert(0, '${workspaceRoot.replace(/\\/g, '/')}'); from zhiai.lexer import tokenize; from zhiai.parser import parse; from zhiai.interpreter import Interpreter; s=\\"${escapedCode}\\"; tokens=tokenize(s); p=parse(tokens); Interpreter().run(p)"`;
-        cp.exec(cmd, { cwd: workspaceRoot }, (err, stdout, stderr) => {
-            if (err || stderr) {
+        const root = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : path.dirname(editor.document.fileName);
+        const escapedCode = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '; ');
+        const cmd = `python -c "import sys; sys.path.insert(0, '${root.replace(/\\/g, '/')}'); from zhiai.lexer import tokenize; from zhiai.parser import parse; from zhiai.interpreter import Interpreter; s=\\"${escapedCode}\\"; Interpreter().run(parse(tokenize(s)))"`;
+        cp.exec(cmd, { cwd: root }, (err, stdout, stderr) => {
+            if (err || stderr)
                 vscode.window.showErrorMessage(`求值错误: ${stderr || err?.message}`);
-            }
-            else {
-                vscode.window.showInformationMessage(`👉 致爱求值预览:\n\n${stdout.trim() || '执行成功 (无输出)'}`);
-            }
+            else
+                vscode.window.showInformationMessage(`👉 致爱求值预览:\n\n${stdout.trim() || '执行成功'}`);
         });
-    });
-    context.subscriptions.push(evalCommand);
-    // ─── 5. 格式化集成 (Document Formatting Provider) ───────────────
-    const formattingProvider = vscode.languages.registerDocumentFormattingEditProvider('zhiai', {
+    }));
+    context.subscriptions.push(vscode.languages.registerDocumentFormattingEditProvider('zhiai', {
         provideDocumentFormattingEdits(document) {
-            const workspaceRoot = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : path.dirname(document.fileName);
-            const formatterScript = path.join(workspaceRoot, 'zhiai_fmt.py');
-            if (!fs.existsSync(formatterScript))
-                return [];
-            try {
-                // 执行外部的 Token 驱动格式化器
-                cp.execSync(`python zhiai_fmt.py "${document.fileName}"`, { cwd: workspaceRoot });
-                // 重新加载页面更改
-                return [];
+            const root = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : path.dirname(document.fileName);
+            if (fs.existsSync(path.join(root, 'zhiai_fmt.py'))) {
+                cp.execSync(`python zhiai_fmt.py "${document.fileName}"`, { cwd: root });
             }
-            catch (e) {
-                vscode.window.showErrorMessage("保存并格式化失败: " + e.message);
-                return [];
-            }
-        }
-    });
-    context.subscriptions.push(formattingProvider);
-    // ─── 6. 一键运行与打包指令 ───────────────────────────────────────
-    const runCommand = vscode.commands.registerCommand('zhiai.runFile', () => {
-        const activeEditor = vscode.window.activeTextEditor;
-        if (activeEditor) {
-            const filePath = activeEditor.document.fileName;
-            const terminal = vscode.window.createTerminal("致爱运行");
-            terminal.show();
-            terminal.sendText(`python zhiai_cli.py run "${filePath}"`);
-        }
-    });
-    const compileCommand = vscode.commands.registerCommand('zhiai.compileExe', () => {
-        const activeEditor = vscode.window.activeTextEditor;
-        if (activeEditor) {
-            const filePath = activeEditor.document.fileName;
-            const terminal = vscode.window.createTerminal("致爱打包");
-            terminal.show();
-            terminal.sendText(`python zhiai_cli.py compile "${filePath}" --exe`);
-        }
-    });
-    context.subscriptions.push(runCommand, compileCommand);
-    // ─── 7. 真正的调试体验 (Debugger / DAP Engine) ────────────────────
-    context.subscriptions.push(vscode.debug.registerDebugConfigurationProvider('zhiai', {
-        resolveDebugConfiguration(folder, config) {
-            if (!config.type && !config.request && !config.name) {
-                const editor = vscode.window.activeTextEditor;
-                if (editor && editor.document.languageId === 'zhiai') {
-                    config.type = 'zhiai';
-                    config.name = '调试致爱脚本 (Inline Debug)';
-                    config.request = 'launch';
-                    config.program = '${file}';
-                }
-            }
-            return config;
+            return [];
         }
     }));
-    // 注册内联 Debug 适配器描述工厂，启动极速且深度可视化的 DAP 调试
+    context.subscriptions.push(vscode.commands.registerCommand('zhiai.runFile', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            const terminal = vscode.window.createTerminal("致爱运行");
+            terminal.show();
+            terminal.sendText(`python zhiai_cli.py run "${editor.document.fileName}"`);
+        }
+    }));
     context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory('zhiai', {
         createDebugAdapterDescriptor(session) {
             return new vscode.DebugAdapterInlineImplementation(new ZhiaiDebugAdapter(session));
         }
     }));
-    // ─── 8. 包管理集成 (ZAP GUI Sidebar Webview) ─────────────────────
     context.subscriptions.push(vscode.window.registerWebviewViewProvider('zhiai.zapView', new ZapWebviewProvider(context)));
 }
 exports.activate = activate;
-// 🌐 DAP 调试引擎核心类：全中文可视化单步调试
+// 🌐 DAP 调试引擎 (简版)
 class ZhiaiDebugAdapter {
     constructor(session) {
         this.session = session;
         this.sequence = 1;
         this._onDidSendMessage = new vscode.EventEmitter();
         this.onDidSendMessage = this._onDidSendMessage.event;
-        this.activeFile = '';
-        this.currentLine = 0;
-        this.breakpoints = [];
-        this.locals = { "作者": "致爱团队", "运行状态": "已暂停" };
-        this.evalStack = [];
     }
     handleMessage(message) {
         if (message.type === 'request') {
             const req = message;
-            if (req.command === 'initialize') {
-                this.sendResponse(req, {
-                    supportsConfigurationDoneRequest: true,
-                    supportsEvaluateForHovers: true
-                });
-                // 发送初始化完毕事件
-                this.sendEvent('initialized');
-            }
+            if (req.command === 'initialize')
+                this.sendResponse(req, { supportsConfigurationDoneRequest: true });
             else if (req.command === 'launch') {
-                this.activeFile = req.arguments.program;
-                // 解析代码结构并提取初始变量
-                if (fs.existsSync(this.activeFile)) {
-                    const content = fs.readFileSync(this.activeFile, 'utf8');
-                    content.split('\n').forEach((line, idx) => {
-                        const m = line.match(/(让|常量)\s+([\u4e00-\u9fa5_a-zA-Z0-9]+)\s*=\s*(.+)/);
-                        if (m) {
-                            this.locals[m[2]] = m[3].trim();
-                        }
-                    });
-                }
                 this.sendResponse(req);
-                // 开始暂停在第一行
-                this.currentLine = 0;
-                this.sendEvent('stopped', {
-                    reason: 'entry',
-                    threadId: 1
-                });
-            }
-            else if (req.command === 'setBreakpoints') {
-                const bps = (req.arguments.breakpoints || []).map((bp) => bp.line - 1);
-                this.breakpoints = bps;
-                const responseBreakpoints = bps.map((line) => ({
-                    verified: true,
-                    line: line + 1
-                }));
-                this.sendResponse(req, { breakpoints: responseBreakpoints });
-            }
-            else if (req.command === 'threads') {
-                this.sendResponse(req, {
-                    threads: [{ id: 1, name: "致爱 VM 主线程" }]
-                });
-            }
-            else if (req.command === 'stackTrace') {
-                this.sendResponse(req, {
-                    stackFrames: [{
-                            id: 1,
-                            name: `行 ${this.currentLine + 1} (VM 执行流)`,
-                            source: { name: path.basename(this.activeFile), path: this.activeFile },
-                            line: this.currentLine + 1,
-                            column: 1
-                        }],
-                    totalFrames: 1
-                });
-            }
-            else if (req.command === 'scopes') {
-                this.sendResponse(req, {
-                    scopes: [
-                        { name: "Frame.locals (局部变量)", variablesReference: 100, expensive: false },
-                        { name: "VM.stack (虚拟机求值栈)", variablesReference: 200, expensive: false }
-                    ]
-                });
-            }
-            else if (req.command === 'variables') {
-                const ref = req.arguments.variablesReference;
-                const varsList = [];
-                if (ref === 100) {
-                    Object.keys(this.locals).forEach(key => {
-                        varsList.push({
-                            name: key,
-                            value: String(this.locals[key]),
-                            variablesReference: 0
-                        });
-                    });
-                }
-                else if (ref === 200) {
-                    this.evalStack = [12, "文字数据", [1, 2, 3], true]; // 动态求值栈数据模拟
-                    this.evalStack.forEach((val, idx) => {
-                        varsList.push({
-                            name: `[栈顶 - ${this.evalStack.length - 1 - idx}]`,
-                            value: JSON.stringify(val),
-                            variablesReference: 0
-                        });
-                    });
-                }
-                this.sendResponse(req, { variables: varsList });
-            }
-            else if (req.command === 'next') {
-                // 单步执行
-                this.currentLine++;
-                this.sendResponse(req);
-                this.sendEvent('stopped', {
-                    reason: 'step',
-                    threadId: 1
-                });
-            }
-            else if (req.command === 'continue') {
-                // 持续执行直到下一个断点
-                let hitBreakpoint = false;
-                while (this.currentLine < 200) { // 封顶上限
-                    this.currentLine++;
-                    if (this.breakpoints.includes(this.currentLine)) {
-                        hitBreakpoint = true;
-                        break;
-                    }
-                }
-                this.sendResponse(req);
-                if (hitBreakpoint) {
-                    this.sendEvent('stopped', {
-                        reason: 'breakpoint',
-                        threadId: 1
-                    });
-                }
-                else {
-                    this.sendEvent('terminated');
-                }
+                this.sendEvent('stopped', { reason: 'entry', threadId: 1 });
             }
             else if (req.command === 'disconnect') {
                 this.sendResponse(req);
                 this.sendEvent('terminated');
             }
+            else
+                this.sendResponse(req);
         }
     }
-    sendResponse(request, body) {
-        this._onDidSendMessage.fire({
-            type: 'response',
-            seq: this.sequence++,
-            request_seq: request.seq,
-            command: request.command,
-            success: true,
-            body: body
-        });
-    }
-    sendEvent(event, body) {
-        this._onDidSendMessage.fire({
-            type: 'event',
-            seq: this.sequence++,
-            event: event,
-            body: body
-        });
-    }
+    sendResponse(request, body) { this._onDidSendMessage.fire({ type: 'response', seq: this.sequence++, request_seq: request.seq, command: request.command, success: true, body: body }); }
+    sendEvent(event, body) { this._onDidSendMessage.fire({ type: 'event', seq: this.sequence++, event: event, body: body }); }
     dispose() { }
 }
-// 📦 ZAP 中文包管理器可视化控制台 Sidebar Webview View
 class ZapWebviewProvider {
     constructor(context) {
         this.context = context;
     }
-    resolveWebviewView(webviewView, context, token) {
-        webviewView.webview.options = {
-            enableScripts: true
-        };
-        webviewView.webview.html = this.getHtml();
-        // 监听来自 Webview 的交互信号并调用外部 `zhiai_zap.py` 脚本
-        webviewView.webview.onDidReceiveMessage(message => {
-            if (message.command === 'install') {
-                const pkg = message.packageName;
-                vscode.window.showInformationMessage(`正在为您安装模块「${pkg}」...`);
-                const workspaceRoot = vscode.workspace.workspaceFolders ? vscode.workspace.workspaceFolders[0].uri.fsPath : '';
-                const terminal = vscode.window.activeTerminal || vscode.window.createTerminal("ZAP 包管理中心");
-                terminal.show();
-                terminal.sendText(`python zhiai_zap.py install ${pkg}`);
-                // 反馈安装进度给前端
-                setTimeout(() => {
-                    webviewView.webview.postMessage({ command: 'installed', packageName: pkg });
-                }, 3000);
+    resolveWebviewView(webviewView) {
+        webviewView.webview.options = { enableScripts: true };
+        webviewView.webview.html = `
+            <html><body>
+            <h3>❤️ ZAP 包管理器</h3>
+            <button onclick="openWiki()">📖 查看 SSA 架构文档</button>
+            <script>
+                const vscode = acquireVsCodeApi();
+                function openWiki() { vscode.postMessage({ command: 'openWiki' }); }
+            </script></body></html>`;
+        webviewView.webview.onDidReceiveMessage(m => {
+            if (m.command === 'openWiki') {
+                const wikiPath = path.join(vscode.workspace.workspaceFolders[0].uri.fsPath, 'wiki', 'SSA_Architecture.md');
+                vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(wikiPath));
             }
         });
-    }
-    getHtml() {
-        return `<!DOCTYPE html>
-<html lang="zh">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            padding: 15px;
-            color: #cccccc;
-            background-color: #1e1e1e;
-        }
-        h2 {
-            font-size: 16px;
-            margin-bottom: 12px;
-            color: #ffffff;
-            border-bottom: 1px solid #333333;
-            padding-bottom: 6px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .search-box {
-            width: 100%;
-            padding: 8px;
-            background: #252526;
-            border: 1px solid #3c3c3c;
-            color: #ffffff;
-            border-radius: 4px;
-            margin-bottom: 15px;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-        .search-box:focus {
-            border-color: #0e639c;
-        }
-        .pkg-card {
-            background: #252526;
-            border: 1px solid #2d2d2d;
-            border-radius: 6px;
-            padding: 10px;
-            margin-bottom: 10px;
-            transition: transform 0.2s, border-color 0.2s;
-        }
-        .pkg-card:hover {
-            transform: translateY(-2px);
-            border-color: #3e3e3f;
-        }
-        .pkg-name {
-            font-weight: bold;
-            color: #ffffff;
-            font-size: 13px;
-        }
-        .pkg-desc {
-            font-size: 11px;
-            color: #aaaaaa;
-            margin: 6px 0;
-        }
-        .btn-install {
-            background-color: #0e639c;
-            color: #ffffff;
-            border: none;
-            padding: 5px 12px;
-            font-size: 11px;
-            border-radius: 3px;
-            cursor: pointer;
-            transition: background 0.2s;
-            width: 100%;
-        }
-        .btn-install:hover {
-            background-color: #1177bb;
-        }
-        .btn-installed {
-            background-color: #28a745;
-            color: #ffffff;
-            cursor: default;
-        }
-    </style>
-</head>
-<body>
-    <h2>❤️ ZAP 包管理器中心</h2>
-    <input type="text" class="search-box" id="search" placeholder="搜索致爱中文模块..." oninput="filterPkgs()">
-    
-    <div id="pkg-list">
-        <div class="pkg-card" data-name="网络增强库">
-            <div class="pkg-name">网络增强库 (web_ext)</div>
-            <div class="pkg-desc">为致爱语言提供高性能的网络连接与网络资源下载，内置 REST 封装。</div>
-            <button class="btn-install" id="btn-web_ext" onclick="installPkg('web_ext')">安装</button>
-        </div>
-
-        <div class="pkg-card" data-name="高级图形库">
-            <div class="pkg-name">高级图形库 (gui_zh)</div>
-            <div class="pkg-desc">原生中文画笔与可视化窗口系统，轻松构建游戏与应用窗体。</div>
-            <button class="btn-install" id="btn-gui_zh" onclick="installPkg('gui_zh')">安装</button>
-        </div>
-
-        <div class="pkg-card" data-name="科学计算库">
-            <div class="pkg-name">科学计算库 (matrix_sci)</div>
-            <div class="pkg-desc">基于 BATCH_OP 二维矩阵点积和线性代数求解器，极速科学运算。</div>
-            <button class="btn-install" id="btn-matrix_sci" onclick="installPkg('matrix_sci')">安装</button>
-        </div>
-    </div>
-
-    <script>
-        const vscode = acquireVsCodeApi();
-        function installPkg(name) {
-            const btn = document.getElementById('btn-' + name);
-            btn.innerHTML = '正在下载...';
-            btn.disabled = true;
-            vscode.postMessage({
-                command: 'install',
-                packageName: name
-            });
-        }
-
-        window.addEventListener('message', event => {
-            const message = event.data;
-            if (message.command === 'installed') {
-                const btn = document.getElementById('btn-' + message.packageName);
-                btn.innerHTML = '已安装 ✓';
-                btn.className = 'btn-install btn-installed';
-            }
-        });
-
-        function filterPkgs() {
-            const query = document.getElementById('search').value.toLowerCase();
-            const cards = document.getElementsByClassName('pkg-card');
-            for (let card of cards) {
-                const name = card.getAttribute('data-name').toLowerCase();
-                if (name.includes(query)) {
-                    card.style.display = 'block';
-                } else {
-                    card.style.display = 'none';
-                }
-            }
-        }
-    </script>
-</body>
-</html>`;
     }
 }
 function deactivate() { }
