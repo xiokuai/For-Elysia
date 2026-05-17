@@ -169,9 +169,23 @@ def _读文件(path):
 
 
 def _写文件(path, content):
-    """写入文本到文件"""
+    """写入文本到文件（如果目标是 .zab 字节码且内容为 JSON，则自动序列化为二进制 marshal 格式）"""
     try:
-        with open(str(path), "w", encoding="utf-8") as f:
+        path_str = str(path)
+        if path_str.endswith(".zab") and isinstance(content, str):
+            try:
+                import json
+                data = json.loads(content)
+                if isinstance(data, dict) and ("constants" in data or "instructions" in data):
+                    import marshal
+                    with open(path_str, "wb") as f:
+                        f.write(b"ZAB\x00")
+                        marshal.dump(data, f)
+                    return
+            except Exception:
+                pass
+                
+        with open(path_str, "w", encoding="utf-8") as f:
             f.write(str(content))
     except Exception as e:
         raise RuntimeError(f"写入文件失败: {e}")
@@ -505,12 +519,33 @@ BUILTINS = {
 }
 
 
+CURRENT_VM = None
+
+class VMCallableWrapper:
+    """可调用包装器：允许 Python 原生方法高效地回调 VM 内部的函数对象"""
+    def __init__(self, func_dict):
+        self.func_dict = func_dict
+
+    def __call__(self, *args):
+        global CURRENT_VM
+        if CURRENT_VM is None:
+            raise RuntimeError("无法回调致爱函数：当前没有活跃的虚拟机实例")
+        return CURRENT_VM.call_function_nested(self.func_dict, list(args))
+
+def wrap_callable(func):
+    """如果是一个致爱函数字典，则自动包装为可调用对象；否则保持原样"""
+    if isinstance(func, dict) and func.get("type") == "function":
+        return VMCallableWrapper(func)
+    return func
+
+
 # ── 高阶函数（顶级版本，同时支持数组方法形式） ──────────────────────────
 
 def _筛选(arr, func):
     """筛选满足条件的元素: 筛选(数组, 函数)"""
     if not isinstance(arr, list):
         raise RuntimeError("筛选: 第一个参数必须是数组")
+    func = wrap_callable(func)
     return [item for item in arr if func(item)]
 
 
@@ -518,6 +553,7 @@ def _映射(arr, func):
     """对每个元素执行函数: 映射(数组, 函数)"""
     if not isinstance(arr, list):
         raise RuntimeError("映射: 第一个参数必须是数组")
+    func = wrap_callable(func)
     return [func(item) for item in arr]
 
 
@@ -529,6 +565,7 @@ def _排序(arr, key_func=None):
     if key_func is None:
         result.sort()
     else:
+        key_func = wrap_callable(key_func)
         result.sort(key=lambda x: key_func(x))
     return result
 
@@ -537,6 +574,7 @@ def _归约(arr, func, initial=None):
     """归约数组: 归约(数组, 函数, 初始值)"""
     if not isinstance(arr, list):
         raise RuntimeError("归约: 第一个参数必须是数组")
+    func = wrap_callable(func)
     if not arr:
         return initial
     acc = initial if initial is not None else arr[0]
@@ -550,6 +588,7 @@ def _查找(arr, func):
     """查找第一个满足条件的元素: 查找(数组, 函数)"""
     if not isinstance(arr, list):
         raise RuntimeError("查找: 第一个参数必须是数组")
+    func = wrap_callable(func)
     for item in arr:
         if func(item):
             return item
@@ -560,6 +599,7 @@ def _每个(arr, func):
     """对每个元素执行函数（不返回值）: 每个(数组, 函数)"""
     if not isinstance(arr, list):
         raise RuntimeError("每个: 第一个参数必须是数组")
+    func = wrap_callable(func)
     for item in arr:
         func(item)
     return None
@@ -569,6 +609,7 @@ def _任意(arr, func):
     """是否有任意元素满足条件: 任意(数组, 函数)"""
     if not isinstance(arr, list):
         raise RuntimeError("任意: 第一个参数必须是数组")
+    func = wrap_callable(func)
     return any(func(item) for item in arr)
 
 
@@ -576,6 +617,7 @@ def _全部(arr, func):
     """是否所有元素满足条件: 全部(数组, 函数)"""
     if not isinstance(arr, list):
         raise RuntimeError("全部: 第一个参数必须是数组")
+    func = wrap_callable(func)
     return all(func(item) for item in arr)
 
 
@@ -619,16 +661,19 @@ def array_reverse(arr):
 
 def array_join(arr, func):
     """对每个元素执行函数并返回结果数组"""
+    func = wrap_callable(func)
     return [func(item) for item in arr]
 
 
 def array_filter(arr, func):
     """筛选满足条件的元素"""
+    func = wrap_callable(func)
     return [item for item in arr if func(item)]
 
 
 def array_find(arr, func):
     """查找第一个满足条件的元素"""
+    func = wrap_callable(func)
     for item in arr:
         if func(item):
             return item
@@ -724,10 +769,71 @@ STRING_METHODS = {
 # ── 批处理映射 ──────────────────────────────────────────────────────────
 # 为 BATCH_OP 指令提供快速索引
 
+def batch_matrix_add(m1, m2):
+    """二维矩阵相加"""
+    if not isinstance(m1, list) or not isinstance(m2, list):
+        raise RuntimeError("矩阵相加：参数必须是二维数组")
+    if not m1 or not m2 or not isinstance(m1[0], list) or not isinstance(m2[0], list):
+        raise RuntimeError("矩阵相加：参数必须是有效的二维数组")
+    return [[m1[i][j] + m2[i][j] for j in range(len(m1[0]))] for i in range(len(m1))]
+
+
+def batch_matrix_mul(m1, m2):
+    """二维矩阵乘法 (点乘)"""
+    if not isinstance(m1, list) or not isinstance(m2, list):
+        raise RuntimeError("矩阵相乘：参数必须是二维数组")
+    if not m1 or not m2 or not isinstance(m1[0], list) or not isinstance(m2[0], list):
+        raise RuntimeError("矩阵相乘：参数必须是有效的二维数组")
+    r1, c1 = len(m1), len(m1[0])
+    r2, c2 = len(m2), len(m2[0])
+    if c1 != r2:
+        raise RuntimeError(f"矩阵相乘：维度不匹配 ({r1}x{c1} 与 {r2}x{c2})")
+    result = [[0] * c2 for _ in range(r1)]
+    for i in range(r1):
+        for j in range(c2):
+            val = 0
+            for k in range(c1):
+                val += m1[i][k] * m2[k][j]
+            result[i][j] = val
+    return result
+
+
+def batch_matrix_transpose(m):
+    """二维矩阵转置"""
+    if not isinstance(m, list) or not m or not isinstance(m[0], list):
+        raise RuntimeError("矩阵转置：参数必须是二维数组")
+    return [list(x) for x in zip(*m)]
+
+
+def batch_regex_match(pattern, text):
+    """正则表达式匹配，返回所有匹配项的数组"""
+    import re
+    return re.findall(str(pattern), str(text))
+
+
+def batch_regex_replace(pattern, repl, text):
+    """正则表达式替换，返回替换后的文本"""
+    import re
+    return re.sub(str(pattern), str(repl), str(text))
+
+
 BATCH_FUNC_MAP = {
     1: _筛选,
     2: _映射,
     3: array_sort,
     4: str_split,
     5: str_replace,
+    6: batch_matrix_add,
+    7: batch_matrix_mul,
+    8: batch_matrix_transpose,
+    9: batch_regex_match,
+    10: batch_regex_replace,
 }
+
+BUILTINS.update({
+    "矩阵相加": batch_matrix_add,
+    "矩阵相乘": batch_matrix_mul,
+    "矩阵转置": batch_matrix_transpose,
+    "正则匹配": batch_regex_match,
+    "正则替换": batch_regex_replace,
+})

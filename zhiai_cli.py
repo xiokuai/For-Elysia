@@ -67,7 +67,10 @@ def cmd_run_za(filepath, jit=False):
 
 def cmd_run_zab(filepath, fast=False):
     setup_zhiai_path()
-    from zhiai.vm import VM
+    try:
+        from zhiai._fastvm import VM
+    except ImportError:
+        from zhiai.vm import VM
     vm = VM()
     vm.load_file(filepath)
     vm.run()
@@ -205,7 +208,7 @@ def main():
         cmd_eval(args[1])
     elif cmd == "install": cmd_install()
     elif cmd == "uninstall": cmd_uninstall()
-    elif cmd in ("-v", "--version"): print("致爱 v1.0.5 (Performance Optimized)")
+    elif cmd in ("-v", "--version"): print("致爱 v1.6.0 (High Performance Edition)")
     elif cmd in ("-h", "--help"): print(__doc__)
     else:
         if os.path.exists(cmd):

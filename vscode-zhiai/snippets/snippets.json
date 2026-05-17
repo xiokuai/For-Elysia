@@ -1,0 +1,42 @@
+{
+  "Try Catch": {
+    "prefix": "尝试",
+    "body": [
+      "尝试",
+      "  $0",
+      "捕获(${1:错误})",
+      "  输出(${1:错误})",
+      "结束"
+    ],
+    "description": "异常处理块"
+  },
+  "Class Definition": {
+    "prefix": "类",
+    "body": [
+      "类 ${1:类名}",
+      "  函数 构造($2)",
+      "    $0",
+      "  结束",
+      "结束"
+    ],
+    "description": "定义一个类"
+  },
+  "If Statement": {
+    "prefix": "如果",
+    "body": [
+      "如果 ${1:条件} 则",
+      "  $0",
+      "结束"
+    ],
+    "description": "如果语句"
+  },
+  "Function Definition": {
+    "prefix": "函数",
+    "body": [
+      "函数 ${1:函数名}($2)",
+      "  $0",
+      "结束"
+    ],
+    "description": "定义函数"
+  }
+}

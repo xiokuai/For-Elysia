@@ -111,7 +111,10 @@ class Interpreter:
                 module_path += ".za"
             elif os.path.exists(module_path + ".zab"):
                 # 如果只有 .zab，就退化为启动一个 VM 来跑
-                from zhiai.vm import VM
+                try:
+                    from zhiai._fastvm import VM
+                except ImportError:
+                    from zhiai.vm import VM
                 sub_vm = VM()
                 sub_vm.load_file(module_path + ".zab")
                 sub_vm.run()
@@ -125,7 +128,10 @@ class Interpreter:
                 
         # 加载 .za
         if module_path.endswith(".zab"):
-            from zhiai.vm import VM
+            try:
+                from zhiai._fastvm import VM
+            except ImportError:
+                from zhiai.vm import VM
             sub_vm = VM()
             sub_vm.load_file(module_path)
             sub_vm.run()

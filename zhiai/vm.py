@@ -300,17 +300,59 @@ class VM:
             self.global_env.define(k, v)
 
     def load_file(self, path):
-        """从文件加载字节码"""
-        with open(path, "r", encoding="utf-8") as f:
-            self.load(f.read())
+        """从文件加载字节码，自动识别并加载二进制 marshal 格式或传统 JSON 格式"""
+        with open(path, "rb") as f:
+            header = f.read(4)
+            if header == b"ZAB\x00":
+                import marshal
+                try:
+                    bytecode = marshal.load(f)
+                    self.load(bytecode)
+                except Exception as e:
+                    raise VMError(f"加载二进制字节码失败: {e}")
+            else:
+                f.seek(0)
+                try:
+                    content = f.read().decode("utf-8")
+                    self.load(content)
+                except Exception as e:
+                    raise VMError(f"加载字节码失败: {e}")
 
-    def run(self):
-        """执行字节码"""
-        self.ip = 0
+    def call_function_nested(self, func, args):
+        """在当前 VM 上嵌套调用一个致爱函数并返回结果，支持 Python 原生回调"""
+        old_ip = self.ip
+        old_instr = self.instructions
+        old_consts = self.constants
+        old_halted = self.halted
+        
+        func_env = Environment(func.get("closure", self.global_env))
+        for i, param in enumerate(func.get("params", [])):
+            if i < len(args):
+                func_env.define(param, args[i])
+            else:
+                func_env.define(param, None)
+            
+        frame = self.frame_pool.acquire(
+            func["instructions"],
+            return_addr=-1,
+            env=func_env,
+            constants=self.constants,
+            locals_count=func.get("locals_count", 50)
+        )
+        for i in range(min(len(args), len(frame.locals))):
+            frame.locals[i] = args[i]
+            
+        self.call_stack.append(frame)
+        self.instructions = func["instructions"]
+        self.constants = func.get("constants", [])
+        self.ip = func.get("entry_ip", 0)
         self.halted = False
-
+        
+        saved_stack_depth = len(self.stack)
+        saved_call_stack_depth = len(self.call_stack)
+        
         dispatch_list = self._dispatch_list
-        while not self.halted and self.ip < len(self.instructions):
+        while not self.halted and len(self.call_stack) >= saved_call_stack_depth:
             try:
                 instr = self.instructions[self.ip]
                 op_int = instr[0]
@@ -318,6 +360,41 @@ class VM:
                 dispatch_list[op_int](instr)
             except Exception as e:
                 self._handle_exception(e)
+                if self.halted:
+                    break
+        
+        ret_val = None
+        if len(self.stack) > saved_stack_depth:
+            ret_val = self.pop()
+            
+        self.ip = old_ip
+        self.instructions = old_instr
+        self.constants = old_consts
+        self.halted = old_halted
+        
+        return ret_val
+
+    def run(self):
+        """执行字节码"""
+        import zhiai.builtins as builtins
+        old_vm = builtins.CURRENT_VM
+        builtins.CURRENT_VM = self
+
+        self.ip = 0
+        self.halted = False
+
+        try:
+            dispatch_list = self._dispatch_list
+            while not self.halted and self.ip < len(self.instructions):
+                try:
+                    instr = self.instructions[self.ip]
+                    op_int = instr[0]
+                    self.ip += 1
+                    dispatch_list[op_int](instr)
+                except Exception as e:
+                    self._handle_exception(e)
+        finally:
+            builtins.CURRENT_VM = old_vm
 
     def _handle_exception(self, e):
         """处理异常：查找最近的捕获点"""
@@ -557,7 +634,27 @@ class VM:
         name = self.constants[instr[1]]
         obj = self.pop()
         if isinstance(obj, Instance):
-            self.push(obj.get_prop(name))
+            # Inline Cache (IC) check
+            if len(instr) > 3 and obj.shape is instr[2]:
+                self.push(obj.fields[instr[3]])
+                return
+            
+            # Slow path
+            offset = obj.shape.get_offset(name)
+            if offset is not None:
+                # Cache the shape and offset
+                if len(instr) == 2:
+                    instr.extend([obj.shape, offset])
+                else:
+                    instr[2] = obj.shape
+                    instr[3] = offset
+                self.push(obj.fields[offset])
+            else:
+                # Check class methods
+                if name in obj.klass["methods"]:
+                    self.push(obj.klass["methods"][name])
+                else:
+                    self.push(None)
         elif isinstance(obj, dict):
             self.push(obj.get(name))
         elif isinstance(obj, str):
@@ -582,7 +679,25 @@ class VM:
         obj = self.pop()
         val = self.pop()
         if isinstance(obj, Instance):
-            obj.set_prop(name, val)
+            # Inline Cache (IC) check
+            if len(instr) > 3 and obj.shape is instr[2]:
+                obj.fields[instr[3]] = val
+                self.push(val)
+                return
+            
+            # Slow path
+            offset = obj.shape.get_offset(name)
+            if offset is not None:
+                # Cache the shape and offset
+                if len(instr) == 2:
+                    instr.extend([obj.shape, offset])
+                else:
+                    instr[2] = obj.shape
+                    instr[3] = offset
+                obj.fields[offset] = val
+            else:
+                # Transition shape (property doesn't exist yet)
+                obj.set_prop(name, val)
         elif isinstance(obj, dict):
             obj[name] = val
         else:
@@ -799,7 +914,19 @@ class VM:
         obj = self.pop()
 
         if isinstance(obj, Instance):
-            method = obj.klass["methods"].get(method_name)
+            # 1. 尝试使用方法内联缓存 (Method Inline Cache Hit)
+            if len(instr) > 4 and obj.klass is instr[3]:
+                method = instr[4]
+            else:
+                # 2. 慢速路径并写入缓存
+                method = obj.klass["methods"].get(method_name)
+                if method is not None:
+                    if len(instr) == 3:
+                        instr.extend([obj.klass, method])
+                    else:
+                        instr[3] = obj.klass
+                        instr[4] = method
+
             if method is None:
                 raise VMError(f"类 '{obj.klass['name']}' 没有方法 '{method_name}'")
             if len(func_args) != method.get("arity", 0):

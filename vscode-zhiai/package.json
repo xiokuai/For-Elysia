@@ -2,7 +2,7 @@
   "name": "zhiai",
   "displayName": "致爱 (Zhiai) Language Support",
   "description": "Syntax highlighting and autocomplete for Zhiai programming language",
-  "version": "1.0.5",
+  "version": "1.6.0",
   "publisher": "zhiai-team",
   "icon": "logo.png",
   "repository": "https://github.com/example/zhiai",
@@ -11,7 +11,8 @@
   },
   "categories": [
     "Programming Languages",
-    "Snippets"
+    "Snippets",
+    "Debuggers"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -43,6 +44,24 @@
         "path": "./snippets/snippets.json"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "zhiai-sidebar",
+          "title": "致爱开发中心",
+          "icon": "$(heart)"
+        }
+      ]
+    },
+    "views": {
+      "zhiai-sidebar": [
+        {
+          "type": "webview",
+          "id": "zhiai.zapView",
+          "name": "ZAP 中文模块管理"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "zhiai.runFile",
@@ -53,6 +72,11 @@
         "command": "zhiai.compileExe",
         "title": "打包为 EXE",
         "icon": "$(package)"
+      },
+      {
+        "command": "zhiai.evalSelection",
+        "title": "在 REPL 中求值",
+        "icon": "$(symbol-constant)"
       }
     ],
     "menus": {
@@ -65,6 +89,13 @@
         {
           "command": "zhiai.compileExe",
           "when": "resourceExtname == .za",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "zhiai.evalSelection",
+          "when": "editorHasSelection && editorLangId == zhiai",
           "group": "navigation"
         }
       ]
@@ -80,7 +111,8 @@
     ]
   },
   "activationEvents": [
-    "onLanguage:zhiai"
+    "onLanguage:zhiai",
+    "onView:zhiai.zapView"
   ],
   "scripts": {
     "vscode:prepublish": "npm run compile",
