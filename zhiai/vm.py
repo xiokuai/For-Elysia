@@ -80,7 +80,7 @@ OPCODE_LIST = [
     "END_TRY", "RAISE", "MAKE_CLASS", "MAKE_ARRAY", "MAKE_OBJECT", "PRINT",
     "NEW", "BREAKPOINT", "MAKE_FUNC", "CALL_METHOD", "LOAD_LOCAL", "STORE_LOCAL",
     "LOAD_GLOBAL", "STORE_GLOBAL", "FAST_ADD", "FAST_SUB", "BINOP",
-    "ASYNC_CALL", "AWAIT"
+    "ASYNC_CALL", "AWAIT", "MATCH", "TRY_PROPAGATE"
 ]
 OPCODE_MAP = {op: i for i, op in enumerate(OPCODE_LIST)}
 
@@ -233,6 +233,8 @@ class VM:
             "BINOP": self._op_BINOP,
             "ASYNC_CALL": self._op_ASYNC_CALL,
             "AWAIT": self._op_AWAIT,
+            "MATCH": self._op_MATCH,
+            "TRY_PROPAGATE": self._op_TRY_PROPAGATE,
         }
 
         # 构建整数索引跳转表
@@ -1137,6 +1139,39 @@ class VM:
             self.push(res)
         else:
             self.push(future)
+
+
+    def _op_MATCH(self, instr):
+        # instr: [MATCH, branch_count, default_ip]
+        branch_count = instr[1]
+        default_ip = instr[2]
+        target = self.pop()
+        
+        # 依次检查每个分支 (pattern, target_ip)
+        for _ in range(branch_count):
+            pattern = self.pop()
+            target_ip = self.pop()
+            if target == pattern:
+                self.ip = target_ip
+                return
+                
+        # 都不匹配，走默认
+        self.ip = default_ip
+
+    def _op_TRY_PROPAGATE(self, instr):
+        val = self.pop()
+        if hasattr(val, "是失败") and val.是失败():
+             self.push(val)
+             self._op_RET([OPCODE_MAP["RET"]])
+             return
+        if hasattr(val, "是空") and val.是空():
+             self.push(val)
+             self._op_RET([OPCODE_MAP["RET"]])
+             return
+        if hasattr(val, "获取"):
+            self.push(val.获取())
+        else:
+            self.push(val)
 
     def _op_BREAKPOINT(self, instr):
         print(f"\n[调试] 触发断点 IP: {self.ip}")

@@ -87,6 +87,8 @@ class Parser:
             self.advance()
             expr = self.parse_expr()
             return ast.DeferStmt(expr)
+        if tok.type == TT.MATCH:
+            return self.parse_match()
         if tok.type == TT.IDENTIFIER and tok.value == "类":
             return self.parse_class()
 
@@ -117,7 +119,7 @@ class Parser:
 
     def parse_const(self):
         self.expect(TT.CONST)
-        name = self.expect(TT.IDENTIFIER, "期望常量名").value
+        name = self.expect(TT.IDENTIFIER, "期望变量名").value
         self.expect(TT.EQ, "期望 '='")
         expr = self.parse_expr()
         return ast.ConstDecl(name, expr)
@@ -171,7 +173,7 @@ class Parser:
             return ast.ForEachStmt(var_name, iterable, body)
 
         # 循环 变量 从 X 到 Y [步长 Z]
-        var_name = self.expect(TT.IDENTIFIER, "期望循环变量名").value
+        var_name = self.expect(TT.IDENTIFIER, "期望变量名").value
 
         if self.check(TT.FROM):
             self.expect(TT.FROM)
@@ -300,7 +302,53 @@ class Parser:
         self.expect(TT.END, "期望 '结束'")
         return ast.AsyncFuncDef(name, params, body)
 
+    def parse_match(self):
+        self.expect(TT.MATCH)
+        target = self.parse_expr()
+        self.expect(TT.CASE, "期望 '于'")
+        cases = []
+        default_body = None
+        while not self.check(TT.END) and not self.is_at_end():
+            if self.check(TT.ELSE):
+                self.advance()
+                if self.check(TT.COLON): self.advance() # 允许 "否则:"
+                default_body = self._parse_case_body()
+                break
+            pattern = self.parse_expr()
+            self.expect(TT.COLON, "期望 ':'")
+            body = self._parse_case_body()
+            cases.append((pattern, body))
+        self.expect(TT.END, "期望 '结束'")
+        return ast.MatchStmt(target, cases, default_body)
+
+    def _parse_case_body(self):
+        stmts = []
+        stop_types = {TT.END, TT.ELIF, TT.ELSE, TT.CATCH, TT.EOF}
+        while not self.is_at_end() and self.peek().type not in stop_types:
+            # 如果后面跟着冒号，说明是下一个分支的开始
+            # 模式匹配中通常是 常量: 或 标识符:
+            # 表达式语句后面不太会直接跟冒号（除非是三元运算，但致爱还没加）
+            if self.pos + 1 < len(self.tokens) and self.tokens[self.pos + 1].type == TT.COLON:
+                # 检查是否为 '否则'
+                if self.check(TT.IDENTIFIER) and self.peek().value == "否则":
+                    pass # 继续
+                else:
+                    break
+            
+            # 特殊情况：如果是 '否则' 关键字（虽然没冒号），也可能是结尾
+            if self.check(TT.IDENTIFIER) and self.peek().value == "否则":
+                break
+
+            stmts.append(self.parse_stmt())
+        return stmts
+
     def parse_unary(self):
+        expr = self._parse_base_unary()
+        while self.match(TT.QUESTION):
+            expr = ast.TryPropagateExpr(expr)
+        return expr
+
+    def _parse_base_unary(self):
         if self.check(TT.MINUS):
             self.advance()
             operand = self.parse_unary()
@@ -375,10 +423,13 @@ class Parser:
             self.advance()
             return ast.NumberLit(tok.value)
 
-        # 字符串
+        # 字符串 (支持插值)
         if tok.type == TT.STRING:
             self.advance()
-            return ast.StringLit(tok.value)
+            s = tok.value
+            if "{" in s and "}" in s:
+                return self.parse_interpolated_string(s, tok.line, tok.col)
+            return ast.StringLit(s)
 
         # 布尔
         if tok.type == TT.TRUE:
@@ -444,6 +495,26 @@ class Parser:
             return expr
 
         self.error()
+
+    def parse_interpolated_string(self, raw, line, col):
+        """将 \"你好 {名字}\" 解析为插值节点列表"""
+        import re
+        parts = []
+        last_pos = 0
+        for m in re.finditer(r'\{([^{}]+)\}', raw):
+            start, end = m.span()
+            if start > last_pos:
+                parts.append(ast.StringLit(raw[last_pos:start]))
+            # 对表达式内容进行再次解析
+            expr_str = m.group(1)
+            from .lexer import tokenize
+            sub_tokens = tokenize(expr_str)
+            sub_parser = Parser(sub_tokens)
+            parts.append(sub_parser.parse_expr())
+            last_pos = end
+        if last_pos < len(raw):
+            parts.append(ast.StringLit(raw[last_pos:]))
+        return ast.InterpolatedString(parts)
 
     def parse_anonymous_func(self, is_async=False):
         self.expect(TT.FUNC)

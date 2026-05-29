@@ -107,8 +107,7 @@ class Function:
         # 准备延迟执行栈
         self.interpreter.defer_stacks.append([])
         try:
-            self.interpreter.exec_stmts(self.body, func_env)
-            return None
+            return self.interpreter.exec_stmts(self.body, func_env)
         except ReturnSignal as ret:
             return ret.value
         finally:
@@ -331,6 +330,10 @@ class Interpreter:
             func = Function(stmt.name, stmt.params, stmt.body, env, self)
             env.define(stmt.name, func)
 
+        elif isinstance(stmt, ast.AsyncFuncDef):
+            func = Function(stmt.name, stmt.params, stmt.body, env, self)
+            env.define(stmt.name, func)
+
         elif isinstance(stmt, ast.ReturnStmt):
             value = self.eval(stmt.expr, env) if stmt.expr else None
             raise ReturnSignal(value)
@@ -360,6 +363,19 @@ class Interpreter:
             env.define(stmt.name, klass)
             for m in stmt.methods:
                 methods[m.name] = Function(m.name, m.params, m.body, env, self)
+
+        elif isinstance(stmt, ast.MatchStmt):
+            target = self.eval(stmt.target, env)
+            matched = False
+            for pattern_expr, body in stmt.cases:
+                pattern = self.eval(pattern_expr, env)
+                if target == pattern:
+                    res = self.exec_stmts(body, env)
+                    if res is not None: return res
+                    matched = True
+                    break
+            if not matched and stmt.default_body:
+                return self.exec_stmts(stmt.default_body, env)
 
         elif isinstance(stmt, ast.Program):
             return self.exec_stmts(stmt.statements, env)
@@ -438,7 +454,7 @@ class Interpreter:
             return self.eval_method(node, env)
 
         # 匿名函数
-        if isinstance(node, ast.AnonymousFunc):
+        elif isinstance(node, ast.AnonymousFunc):
             return Function(None, node.params, node.body, env, self)
 
         elif isinstance(node, ast.AwaitExpr):
@@ -447,7 +463,26 @@ class Interpreter:
                 return val.result()
             return val
 
-        raise RuntimeError(f"未知的表达式类型: {type(node).__name__}")
+        elif isinstance(node, ast.TryPropagateExpr):
+            val = self.eval(node.expr, env)
+            # 支持 Result 和 Option 类型 (通过 Duck Typing)
+            if hasattr(val, "是失败") and val.是失败():
+                raise ReturnSignal(val) # 直接向上返回失败
+            if hasattr(val, "是空") and val.是空():
+                raise ReturnSignal(val) # 直接向上返回空值
+            if hasattr(val, "获取"):
+                return val.获取()
+            return val
+
+        elif isinstance(node, ast.InterpolatedString):
+            res = ""
+            for p in node.parts:
+                res += self.to_str(self.eval(p, env))
+            return res
+
+        else:
+            raise RuntimeError(f"未知的表达式类型: {type(node).__name__}")
+
 
     def eval_binary(self, node, env):
         """求值二元运算"""

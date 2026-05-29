@@ -41,6 +41,9 @@ class TT(Enum):
     DEFER = auto()        # 延迟
     ASYNC = auto()        # 异步
     AWAIT = auto()        # 等待
+    MATCH = auto()        # 匹配
+    CASE = auto()         # 于
+    QUESTION = auto()     # ?
 
 
     # 运算符
@@ -108,6 +111,10 @@ KEYWORDS = {
     "捕获": TT.CATCH,
     "结束": TT.END,
     "延迟": TT.DEFER,
+    "异步": TT.ASYNC,
+    "等待": TT.AWAIT,
+    "匹配": TT.MATCH,
+    "于": TT.CASE,
 }
 
 
@@ -355,7 +362,7 @@ class Lexer:
             single = {
                 "+": TT.PLUS, "-": TT.MINUS, "*": TT.STAR, "/": TT.SLASH,
                 "%": TT.PERCENT, "=": TT.EQ, "<": TT.LT, ">": TT.GT,
-                "!": TT.NOT_BANG,
+                "!": TT.NOT_BANG, "?": TT.QUESTION,
                 "(": TT.LPAREN, ")": TT.RPAREN,
                 "[": TT.LBRACKET, "]": TT.RBRACKET,
                 "{": TT.LBRACE, "}": TT.RBRACE,

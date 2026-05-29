@@ -234,3 +234,23 @@ class AwaitExpr(Node):
     def __init__(self, expr):
         self.expr = expr
 
+
+class MatchStmt(Node):
+    """匹配 表达式 于 分支... 结束"""
+    def __init__(self, target, cases, default_body=None):
+        self.target = target
+        self.cases = cases # list of (pattern_expr, body_stmts)
+        self.default_body = default_body
+
+
+class TryPropagateExpr(Node):
+    """表达式?"""
+    def __init__(self, expr):
+        self.expr = expr
+
+
+class InterpolatedString(Node):
+    """包含 {变量} 的插值字符串"""
+    def __init__(self, parts):
+        self.parts = parts # list of (StringLit or Expression)
+

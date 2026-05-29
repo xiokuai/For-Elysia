@@ -86,7 +86,7 @@ def cmd_compile(input_file, output_file=None):
     with open(compiler_path, "r", encoding="utf-8") as f:
         compiler_source = f.read()
     old_argv = sys.argv[:]
-    sys.argv = ["zhiai", "compile", input_file, "-o", output_file]
+    sys.argv = ["zhiai", "compile", compiler_path, input_file, "-o", output_file]
     try:
         tokens = tokenize(compiler_source, compiler_path)
         program = parse(tokens)

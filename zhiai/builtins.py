@@ -449,11 +449,11 @@ def _读文件(path):
     """读取文件全部内容"""
     try:
         with open(str(path), "r", encoding="utf-8") as f:
-            return f.read()
+            return _成功(f.read())
     except FileNotFoundError:
-        raise RuntimeError(f"文件不存在: '{path}'")
+        return _失败(f"文件不存在: '{path}'")
     except Exception as e:
-        raise RuntimeError(f"读取文件失败: {e}")
+        return _失败(f"读取文件失败: {e}")
 
 
 def _写文件(path, content):
@@ -469,14 +469,15 @@ def _写文件(path, content):
                     with open(path_str, "wb") as f:
                         f.write(b"ZAB\x00")
                         marshal.dump(data, f)
-                    return
+                    return _成功(True)
             except Exception:
                 pass
                 
         with open(path_str, "w", encoding="utf-8") as f:
             f.write(str(content))
+        return _成功(True)
     except Exception as e:
-        raise RuntimeError(f"写入文件失败: {e}")
+        return _失败(f"写入文件失败: {e}")
 
 
 def _追加文件(path, content):
@@ -484,8 +485,9 @@ def _追加文件(path, content):
     try:
         with open(str(path), "a", encoding="utf-8") as f:
             f.write(str(content))
+        return _成功(True)
     except Exception as e:
-        raise RuntimeError(f"追加文件失败: {e}")
+        return _失败(f"追加文件失败: {e}")
 
 
 def _文件存在(path):

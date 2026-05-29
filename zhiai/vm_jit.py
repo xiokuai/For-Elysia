@@ -106,8 +106,15 @@ def compile_function(func_obj, global_env):
             code.append(f"            if {idx} < len(locals_): r[{d}] = locals_[{idx}]")
             code.append(f"            else: r[{d}] = None")
             code.append("            ip += 1")
+
         elif op_name == "RET":
             code.append(f"            return r[{d-1}]")
+        elif op_name == "TRY_PROPAGATE":
+            code.append(f"            val = r[{d-1}]")
+            code.append("            if hasattr(val, '是失败') and val.是失败(): return val")
+            code.append("            if hasattr(val, '是空') and val.是空(): return val")
+            code.append(f"            if hasattr(val, '获取'): r[{d-1}] = val.获取()")
+            code.append("            ip += 1")
         elif op_name == "JMP":
             code.append(f"            ip = {instr[1]}")
         elif op_name == "JMP_IF":

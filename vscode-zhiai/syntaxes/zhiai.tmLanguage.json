@@ -45,6 +45,10 @@
             {
               "match": "\\\\.",
               "name": "constant.character.escape.zhiai"
+            },
+            {
+              "match": "\\{[^\\}]*\\}",
+              "name": "variable.other.zhiai"
             }
           ]
         },
@@ -56,6 +60,10 @@
             {
               "match": "\\\\.",
               "name": "constant.character.escape.zhiai"
+            },
+            {
+              "match": "\\{[^\\}]*\\}",
+              "name": "variable.other.zhiai"
             }
           ]
         }
@@ -64,7 +72,7 @@
     "keywords": {
       "patterns": [
         {
-          "match": "\\b(如果|否则如果|否则|当|时|则|循环|从|到|步长|对于|每个|在|中|结束|尝试|捕获|类|延迟)\\b",
+          "match": "\\b(如果|否则如果|否则|当|时|则|循环|从|到|步长|对于|每个|在|中|结束|尝试|捕获|类|延迟|异步|等待|匹配|于)\\b",
           "name": "keyword.control.zhiai"
         },
         {
@@ -100,7 +108,7 @@
     "operators": {
       "patterns": [
         {
-          "match": "(=>|\\+|-|\\*|/|%|\\*\\*|==|!=|<=|>=|<|>|!|&&|\\|\\||=|\\+=|-=|\\*=|/=)",
+          "match": "(=|\\?>|\\+|-|\\*|/|%|\\*\\*|==|!=|<=|>=|<|>|!|&&|\\|\\||=|\\+=|-=|\\*=|/=)",
           "name": "keyword.operator.zhiai"
         }
       ]
