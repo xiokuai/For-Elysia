@@ -70,7 +70,7 @@ def cmd_run_zab(filepath, fast=False):
     try:
         from zhiai._fastvm import VM
     except ImportError:
-        from zhiai.vm import VM
+        from zhiai.register_vm import RegisterVM as VM
     vm = VM()
     vm.load_file(filepath)
     vm.run()
